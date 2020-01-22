@@ -128,19 +128,18 @@ We use *data.table's* fread function to speed up reading in the data. To avoid m
 
 ```{r warning=FALSE, results=FALSE}
 
-# TODO - must update the paths to these files for this to run locally
+# Update this depending on your local setup
+file_path <-  "D:\\Northeastern\\"
 
-train <- as.tibble(fread('train_v2.csv'))
-test <- as.tibble(fread('sample_submission_v2.csv'))
-members <- as.tibble(fread('members_v3.csv', nrows = 1e6))
-trans <- as.tibble(fread('transactions.csv'))
-trans2 <- as.tibble(fread('transactions_v2.csv'))
+# We won't be using the Kaggle training or test data. We'll create our own labels
+#train <- as.tibble(fread(paste0(file_path,'train_v2.csv')))
+#test <- as.tibble(fread('sample_submission_v2.csv'))
+members <- as.tibble(fread(paste0(file_path,'members_v3.csv'), nrows = 1e6))
+trans <- as.tibble(fread(paste0(file_path,'transactions.csv')))
+trans2 <- as.tibble(fread(paste0(file_path,'transactions_v2.csv')))
 trans_combined <- bind_rows(trans, trans2)
 
-logs <- as.tibble(fread('user_logs_v2.csv', nrows = 5e6))
-
-test_trans <- test %>% inner_join(trans_combined)
-train_trans <- train %>% inner_join(trans_combined)
+logs <- as.tibble(fread(paste0(file_path,'user_logs_v2.csv'), nrows = 5e6))
 ```
 
 
