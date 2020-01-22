@@ -46,3 +46,4 @@ vignettes/*.pdf
 # GCP Service Key
 ds5500-7e5f8aa07468.json
 KKBox R Project/members_existed_before_20160101.csv
+.DS_Store	
