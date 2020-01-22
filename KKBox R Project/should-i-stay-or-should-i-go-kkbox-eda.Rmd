@@ -1,0 +1,1977 @@
+---
+title: 'Should I stay or should I go? - KKBox EDA'
+date: '`r Sys.Date()`'
+
+output:
+  html_document:
+    number_sections: true
+    fig_caption: true
+    toc: true
+    fig_width: 7
+    fig_height: 4.5
+    theme: cosmo
+    highlight: tango
+    code_folding: hide
+---
+
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo=TRUE, error=FALSE)
+```
+
+# Introduction
+
+This is an Exploratory Data Analysis for the [WSDM - KKBox's Churn Prediction Challenge](https://www.kaggle.com/c/kkbox-churn-prediction-challenge) with [tidy R](http://tidyverse.org/) and [ggplot2](http://ggplot2.tidyverse.org/).
+
+The aim of this challenge is to predict whether a user of the music streaming service [KKBox](https://www.kkbox.com/) will "churn", i.e. leave this subscription-based service, by analysing the user's behaviour on the website. 
+
+The [data](https://www.kaggle.com/c/kkbox-churn-prediction-challenge/data) comes in the shape of *five* different files. Four of them contain the user IDs and properties:
+
+- In `train.csv` we find the IDs and whether these users have churned or not.
+
+- `transactions.csv` gives us details like *payment method* or whether the subscription was cancelled.
+
+- `user_logs.csv` contains the listening behaviour of a user in terms of number of songs played.
+
+- `members.csv` includes the user's age, city, and such for users that have these membership information.
+
+Finally, `sample_submission_zero.csv` serves as the *test* data set for the users for which we are tasked to predict their behaviour. Some of these files are large, with a maximum of about 6.65 GB for the *user\_logs* data in a compressed form. We will discuss more of their content and features as the exploration goes along.
+
+## Load libraries and helper functions
+
+
+```{r, message = FALSE}
+
+# general visualisation
+library('ggplot2') # visualisation
+library('scales') # visualisation
+library('grid') # visualisation
+library('gridExtra') # visualisation
+library('RColorBrewer') # visualisation
+library('corrplot') # visualisation
+
+# general data manipulation
+library('dplyr') # data manipulation
+library('readr') # input/output
+library('data.table') # data manipulation
+library('tibble') # data wrangling
+library('tidyr') # data wrangling
+library('stringr') # string manipulation
+library('forcats') # factor manipulation
+
+# Dates
+library('lubridate') # date and time
+
+# Extra vis
+library('ggforce') # visualisation
+library('ggridges') # visualisation
+```
+
+In this Kernel we use the *multiplot* function, courtesy of [R Cookbooks](http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_(ggplot2)/) to create multi-panel plots and a brief helper function to compute binomial confidence intervals.
+
+```{r}
+# Define multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+```{r}
+# function to extract binomial confidence levels
+get_binCI <- function(x,n) as.list(setNames(binom.test(x,n)$conf.int, c("lwr", "upr")))
+```
+
+
+## Load data
+
+We use *data.table's* fread function to speed up reading in the data. To avoid memory problems cause by the large size of the data for the purpose of this exploration we only read in 1 million rows each from the data sets `members.csv` (about 20% of the total data), and `transactions.csv` (about 5%), as well as 5 million rows (about 0.25%) from the `user_logs.csv` data set.
+
+```{r warning=FALSE, results=FALSE}
+
+# TODO - must update the paths to these files for this to run locally
+
+train <- as.tibble(fread('train_v2.csv'))
+test <- as.tibble(fread('sample_submission_v2.csv'))
+members <- as.tibble(fread('members_v3.csv', nrows = 1e6))
+trans <- as.tibble(fread('transactions.csv'))
+trans2 <- as.tibble(fread('transactions_v2.csv'))
+trans_combined <- bind_rows(trans, trans2)
+
+logs <- as.tibble(fread('user_logs_v2.csv', nrows = 5e6))
+
+test_trans <- test %>% inner_join(trans_combined)
+train_trans <- train %>% inner_join(trans_combined)
+```
+
+
+## File structure and content
+
+First, we will have an overview of the data sets using the *summary* and *glimpse* tools. We begin with the *train* data:
+
+```{r}
+summary(train)
+```
+
+```{r}
+glimpse(train)
+```
+
+We find that *is\_churn* is given as an integer that's either zero or one. It might make sense to choose a different encoding here. The user IDs (*msno*) are rather long character strings (and the feature name presumably is abbreviated from membership/member-subscription number).
+
+Next is the **members** data:
+
+```{r}
+summary(members)
+```
+
+```{r}
+glimpse(members)
+```
+
+We find:
+
+- In total 21 *Cities* are encoded by integers (there's no "2"). A factor encoding would make more sense here.
+
+- The *bd* feature is the age of the user (according to the [data description](https://www.kaggle.com/c/kkbox-churn-prediction-challenge/data)) and contains clear outliers.
+
+- The *gender* is given by a character string and appears to contain quite a lot of missing entries.
+
+- *Registered\_via* is a registration method that can probably also be factor encoded. The minimum is 3 and the maximum is 16. Both features contain values that lie well outside our prediction range.
+
+- The *registration_init_time* and *expiration_date* are date columns that should be encoded accordingly.
+
+
+Now we check the **transactions** data set:
+
+```{r}
+summary(trans)
+```
+
+```{r}
+glimpse(trans)
+```
+
+We find:
+
+- The *payment\_method\_id* is encoded in integers from 2 to 41, with 41 being the median and therefore the most popular single method.
+
+- The feature *payment\_plan\_days* measures the length of membership subscription in days. Part of the difficulty in this challenge stems from the [subscription model of KKBox](https://www.kaggle.com/c/kkbox-churn-prediction-challenge/data): Typically, a user would subscribe only for 30 days at a time (the median) and if wishing so re-subscribe every month; automatically or manually. Values here go up to 450 days.
+
+- In *plan\_list\_price* and *actual\_amout\_paid* we can see the theoretical and actual subscription price in units of New Taiwan Dollar (NTD). The values of both features range from 0-2000 NTD, with the *actual* mean being slightly higher than the *list* mean.
+
+- The feature *is_auto_renew* is a binary flag (encoded as integer) that shows a transaction was an automatic renewal of a user subscription. Judging from the integer mean of 0.85 a large majority of users take this option.
+
+- Again we have two date-type features: *transaction\_date* and *membership\_expire\_date*. Those are important for determining whether a user has churned. In this challenge the [definition of churn](https://www.kaggle.com/c/kkbox-churn-prediction-challenge/data) is "no new valid service subscription within 30 days after the current membership expires."
+
+- The feature *is\_cancel* indicates a user cancellation in this transaction. This could lead to churn or to a new subscription plan.
+
+
+Finally, let's look at our sample of the **user\_logs** data which records the listening behaviour:
+
+```{r}
+summary(logs)
+```
+
+```{r}
+glimpse(logs)
+```
+
+We find:
+
+- We have another *date* column reaching from Jan 2015 to the end of Feb 2017 (in this sample).
+
+- The integer features *num\_25*, *num\_50*, *num\_75*, *num\_985*, and *num\_100* tell us the *number of songs* for this day that the user played for <25%, 25-50%, 50-75%, 75-98.5%, or >98.5% of their total duration. In other words: whether they liked the songs they heard. An interesting pattern can already be seen in the maxima of these features which decline from <25% to a local minimum at 50-75% only to rise again toward >98.5%. In general, the medians of these features are between 0 and 2, except for the full songs being played (*num\_100*) where it is 17.
+
+- In *num\_unq* we have encoded the number of unique songs played on by this user on that day. The median is 30.
+
+- The feature *total\_sec* gives us the total number of seconds of music played per user per day. Be aware that there are a few spurious entries with highly negative or positive values:
+
+```{r}
+logs %>%
+  filter(abs(total_secs) > 1e10) %>%
+  select(total_secs) %>%
+  arrange(desc(total_secs)) %>%
+  head(4)
+
+logs %>%
+  filter(abs(total_secs) > 1e10) %>%
+  nrow()
+```
+
+## Missing values
+
+There are no NAs in our data samples.
+
+```{r}
+sum(is.na(train))
+sum(is.na(members))
+sum(is.na(trans))
+sum(is.na(logs))
+```
+
+
+## Reformating features
+
+```{r}
+train <- train %>%
+  mutate(is_churn = factor(is_churn))
+
+members <- members %>%
+  mutate(city = factor(city),
+         gender = factor(gender),
+         reg_via = factor(registered_via),
+         reg_init = ymd(registration_init_time))
+
+trans <- trans %>%
+  mutate(pay_met = factor(payment_method_id),
+         auto_renew = factor(is_auto_renew),
+         is_cancel = factor(is_cancel),
+         trans_date = ymd(transaction_date),
+         exp_date = ymd(membership_expire_date))
+
+logs <- logs %>%
+  mutate(date = ymd(date))
+```
+
+
+# Individual feature visualisations
+
+
+
+In a first step, we look at the various data sets individually. Of course, all the data is related and we will study these relations afterwards. But first things first.
+
+
+
+
+
+## Train and Members data
+
+
+
+We start by visualising the *members* data sample. We also add the churn statistics from the *train* data for a comprehensive overview.
+
+
+
+The *members* data contains the kind of information typically found in a user profile (age, city, gender) together registration dates and methods:
+
+
+
+```{r  split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 1", out.width="100%"}
+
+p1 <- train %>%
+
+  ggplot(aes(is_churn, fill = is_churn)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none")
+
+
+
+p2 <- members %>%
+
+  ggplot(aes(gender, fill = gender)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none")
+
+
+
+p3 <- members %>%
+
+  ggplot(aes(reg_via, fill = reg_via)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  scale_y_sqrt()
+
+
+
+p4 <- members %>%
+
+  ggplot(aes(city, fill = city)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  scale_y_sqrt()
+
+
+
+p5 <- members %>%
+
+  filter(bd > 0 & bd < 100) %>%
+
+  ggplot(aes(bd)) +
+
+  geom_density(fill = "red", bw = 1)
+
+
+
+layout <- matrix(c(1,1,2,2,3,3,4,4,4,5,5,5),2,6,byrow=TRUE)
+
+multiplot(p1, p2, p3, p4, p5, layout=layout)
+
+```
+
+
+
+We find:
+
+
+
+- The vast majority of users didn't churn:
+
+
+
+```{r}
+
+train %>%
+
+  group_by(is_churn) %>%
+
+  summarise(percentage = n()/nrow(train)*100)
+
+```
+
+
+
+Only about 6% of users seemed to have left. This looks quite successful, but it also makes for a rather imbalanced classification problem.
+
+
+
+- The clear majority of users did not provide information on their *gender*. Those who did are pretty evenly split with just a sligthly higher percentage of "male" over "female" users:
+
+
+
+```{r}
+
+members %>%
+
+  count(gender)
+
+```
+
+
+
+- There are 7 different *registration_via* methods that can be classified in 3 groups (note the square-root axis): method "4" is clearly the most frequent one. Methods "3", "7", and "9" have similar frequencies that are still high. Methods "10", "13", and "16" are not particularly popular.
+
+
+
+- Of the 21 cities, number "1" is where most users live. Everything else is similarly unpopular.
+
+
+
+- The age distribution (*bd*), after restricted to sensible values, rises quickly among teenagers and peaks among young adults. Above 25, it declines gradually down toward 60-70.
+
+
+
+
+
+Looking at the *dates of initial registration* we see the following:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 2", out.width="100%"}
+
+p1 <- members %>%
+
+  ggplot(aes(reg_init)) +
+
+  geom_freqpoly(color = "dark green", binwidth = 1)
+
+
+
+p2 <- members %>%
+
+  mutate(wday = wday(reg_init, label = TRUE)) %>%
+
+  ggplot(aes(wday, fill = wday)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Day of the week")
+
+
+
+p3 <- members %>%
+
+  filter(reg_init > ymd("20041231") & reg_init < ymd("20170101")) %>%
+
+  mutate(month = month(reg_init, label = TRUE)) %>%
+
+  ggplot(aes(month, fill = month)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Month of the year")
+
+
+
+layout <- matrix(c(1,1,2,3),2,2,byrow=TRUE)
+
+multiplot(p1, p2, p3, layout=layout)
+
+```
+
+
+
+We find:
+
+
+
+- After a slow start the popularity started rising slowly after 2010 and increased strongly after 2015. The last year or two, though, have seen a drop in new initial registrations.
+
+
+
+- We see that the weekend (Sat, Sun) have significantly higher initial registration than the rest of the week. Amongs the weekdays only, Friday has notably higher registration numbers.
+
+
+
+- Throughout the months of the year we see that Jan, Feb, and Oct-Dec have higher number of initial registrations than the rest of the months. Apr and May are the least popular months. However, this behaviour might be caused by the strong variations since 2015. Note that for the monthly plot we only considered complete years.
+
+
+
+
+
+The time series of the subscription *expiration dates* is a bit odd:
+
+
+
+```{r eval=FALSE, split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 3", out.width="100%"}
+
+members %>%
+
+  ggplot(aes(reg_exp)) +
+
+  geom_freqpoly(color = "red", binwidth = 5) +
+
+  facet_zoom(x = (reg_exp > ymd("20140901") & reg_exp < ymd("20180301")))
+
+```
+
+
+
+Ranging originally from 1970 to 2100, we see more of an interesting pattern over the last couple of years until the end of 2018. Applying the limits in the plot above we arrive at the following weekday and month statistics for the expiry dates:
+
+
+
+```{r eval=FALSE, split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 4", out.width="100%"}
+
+p1 <- members %>%
+
+  filter(reg_exp > ymd("20140901") & reg_exp < ymd("20180301")) %>%
+
+  mutate(wday = wday(reg_exp, label = TRUE)) %>%
+
+  ggplot(aes(wday, fill = wday)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Day of the week")
+
+
+
+p2 <- members %>%
+
+  filter(reg_exp > ymd("20140901") & reg_exp < ymd("20180301")) %>%
+
+  mutate(month = month(reg_exp, label = TRUE)) %>%
+
+  ggplot(aes(month, fill = month)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Month of the year")
+
+
+
+layout <- matrix(c(1,2),2,1,byrow=TRUE)
+
+multiplot(p1, p2, layout=layout)
+
+```
+
+
+
+We find that Saturday and Tuesday are the most likely days for an expiry date and September is clearly the most likely month. The latter observation might be caused by the large spike in 2017; with the 2015 spike probably influencing the June numbers.
+
+
+
+
+
+## Transactions data set
+
+
+
+In the *transactions* data set we find payment and membership related information. Here are two intial overview plots for the non-date features:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 5", out.width="100%"}
+
+p1 <- trans %>%
+
+  ggplot(aes(pay_met, fill = pay_met)) +
+
+  geom_bar() +
+
+  scale_y_sqrt() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Payment method")
+
+
+
+p2 <- trans %>%
+
+  ggplot(aes(auto_renew, fill = auto_renew)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none")
+
+
+
+p3 <- trans %>%
+
+  ggplot(aes(is_cancel, fill = is_cancel)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none")
+
+
+
+p4 <- trans %>%
+
+  mutate(payment_plan_days = factor(payment_plan_days)) %>%
+
+  ggplot(aes(payment_plan_days, fill = payment_plan_days)) +
+
+  geom_bar() +
+
+  scale_y_sqrt() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Payment plan duration [d]")
+
+
+
+layout <- matrix(c(1,1,2,3,4,4),3,2,byrow=TRUE)
+
+multiplot(p1, p2, p3, p4, layout=layout)
+
+```
+
+
+
+We find:
+
+
+
+- The *payment\_method* "41" is by far the most popular one. Methods with encodings above 30 also contribute a notable fraction compared to those with smaller numbers.
+
+
+
+- The vast majority of users has *automatic renewal* of their subscriptions enabled.
+
+
+
+- Only very few users actively canceled their subscriptions.
+
+
+
+- We plot the *payment plan days* duration in a categorical style since these time ranges are mostly multiples of 7 or 30 days (i.e. a week or a month). The standard value of 30 days is clearly visible together with potential trial passes of 0 days and one week as well as 31 days.
+
+
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 6", out.width="100%"}
+
+p1 <- trans %>%
+
+  mutate(plan_list_price = factor(plan_list_price)) %>%
+
+  ggplot(aes(plan_list_price, fill = plan_list_price)) +
+
+  geom_bar() +
+
+  scale_y_sqrt() +
+
+  theme(legend.position = "none", axis.text.x  = element_text(angle=90, vjust=0.5)) +
+
+  labs(x = "Payment plan price [NTD]")
+
+
+
+p2 <- trans %>%
+
+  mutate(actual_amount_paid = factor(actual_amount_paid)) %>%
+
+  ggplot(aes(actual_amount_paid, fill = actual_amount_paid)) +
+
+  geom_bar() +
+
+  scale_y_sqrt() +
+
+  theme(legend.position = "none", axis.text.x  = element_text(angle=90, vjust=0.5)) +
+
+  labs(x = "Actual paid amount [NTD]")
+
+
+
+p3 <- trans %>%
+
+  mutate(pay_same = (plan_list_price == actual_amount_paid)) %>%
+
+  ggplot(aes(pay_same, fill = pay_same)) +
+
+  geom_bar() +
+
+  scale_y_sqrt() +
+
+  theme(legend.position = "none", axis.text.x  = element_text(angle=90, vjust=0.5)) +
+
+  labs(x = "Planned = actual amount?")
+
+
+
+p4 <- trans %>%
+
+  mutate(diff_paid = factor(plan_list_price - actual_amount_paid)) %>%
+
+  filter(diff_paid != "0") %>%
+
+  ggplot(aes(diff_paid, fill = diff_paid)) +
+
+  geom_bar() +
+
+  scale_y_sqrt() +
+
+  theme(legend.position = "none", axis.text.x  = element_text(angle=90, vjust=0.5)) +
+
+  labs(x = "Difference plan - actual [NTD]")
+
+  
+
+layout <- matrix(c(1,1,1,1,1,2,2,2,2,2,3,3,4,4,4),3,5,byrow=TRUE)
+
+multiplot(p1, p2, p3, p4, layout=layout)
+
+```
+
+
+
+Here we visualise the paid subscriptions as categories, since there are only a limited number of payment options. Note the square-root scaling for the y axes.
+
+
+
+We find:
+
+
+
+- The overall distributions of *planned* vs *actual* payment are very similar; even though differences are visible e.g. for 119 NTD. Since both features have the same discrete payment values we can directly compare their frequency.
+
+
+
+- However, there are differences in the planned vs actual payment for individual users. We split this visualisation into two plots, where we first see that the majority of transactions ended up paying according to the plan. The second plot shows the differences in pay (plan - actual) for those transactions where differences exist. Interestingly, in most of these cases the users ended up paying more; leading to an apparent cumulative amount of more than 2 million NTD (at least for our restricted exploration sample):
+
+
+
+```{r}
+
+trans %>%
+
+  mutate(diff_paid = plan_list_price - actual_amount_paid) %>%
+
+  filter(diff_paid != 0) %>%
+
+  .$diff_paid %>%
+
+  sum()
+
+```
+
+
+
+
+
+We are visualising the time series of all *transaction\_dates* and *membership\_expiry\_dates* together to reveal an interesting pattern:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 7", out.width="100%"}
+
+trans %>%
+
+  filter(exp_date > ymd("20150101")) %>%
+
+  ggplot(aes(exp_date)) +
+
+  geom_freqpoly(color = "blue", binwidth = 1) +
+
+  geom_freqpoly(aes(trans_date), color = "red", binwidth = 1) +
+
+  facet_zoom(x = (trans_date > ymd("20160115") & trans_date < ymd("20160501") &
+
+                    exp_date > ymd("20160115") & exp_date < ymd("20160501"))) +
+
+  labs(x = "Transaction date (red) vs Expiry date (blue)")
+
+  
+
+```
+
+
+
+We find:
+
+
+
+- Both features share a very similar time series.
+
+
+
+- Overlayed on a slowly rising baseline trend there are distinct, strong spikes at the end of each month. This might be due to the (automatic) renewals of the user subscriptions.
+
+
+
+- Interestingly, these spikes are accompanied by notable dips in the days prior to them.
+
+
+
+Here we needed to restrict the *membership\_expiration\_date* values to coincide with the beginning of 2015. The original data start in 1970 but only contain useful information from 2015 onward.
+
+
+
+
+
+Next we compare the transaction/expiry volume throughout the days of the week and the months of the year:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 8", out.width="100%"}
+
+p1 <- trans %>%
+
+  mutate(wday = wday(trans_date, label = TRUE)) %>%
+
+  ggplot(aes(wday, fill = wday)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Day of the week") +
+
+  ggtitle("Transaction Dates")
+
+
+
+p2 <- trans %>%
+
+  filter(trans_date < ymd("20170101")) %>%
+
+  mutate(month = month(trans_date, label = TRUE)) %>%
+
+  ggplot(aes(month, fill = month)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Month of the year")
+
+
+
+p3 <- trans %>%
+
+  mutate(wday = wday(exp_date, label = TRUE)) %>%
+
+  ggplot(aes(wday, fill = wday)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Day of the week") +
+
+  ggtitle("Expiry Dates")
+
+
+
+p4 <- trans %>%
+
+  filter(exp_date > ymd("20150101") & exp_date < ymd("20170101")) %>%
+
+  mutate(month = month(exp_date, label = TRUE)) %>%
+
+  ggplot(aes(month, fill = month)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Month of the year")
+
+
+
+layout <- matrix(c(1,2,3,4),2,2,byrow=FALSE)
+
+multiplot(p1, p2, p3, p4, layout=layout)
+
+```
+
+
+
+- The daily numbers are comparable, with Tuesday and Saturday being slightly more popular. In our relatively limited data set such a difference might be caused by a larger number of spikes falling on one of these days.
+
+
+
+- Throughout the months there is a clear trend of more *transactions* and *expirations* occuring during the second part of the year than in the first part. Behaviour like this is consistent with a positive linear trend, which we can see in our data.
+
+
+
+
+
+## User logs
+
+
+
+The original `user_logs.csv` file takes up about 27 GB in uncompressed form; which is why here we only use the first 0.25% of this data (still 5 million rows). In this file we have the information about the listening behaviour of the users.
+
+
+
+Our initial overview plot features a few log-scale x axes:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 9", out.width="100%"}
+
+p1 <- logs %>%
+
+  count(msno) %>%
+
+  ggplot(aes(n)) +
+
+  geom_bar(fill = "blue") +
+
+  labs(x = "Entries per user")
+
+
+
+p2 <- logs %>%
+
+  filter(abs(total_secs)<1e5) %>%
+
+  ggplot(aes(total_secs)) +
+
+  geom_vline(xintercept = median(logs$total_secs), linetype = 2) +
+
+  geom_density(fill = "blue", alpha = 0.5) +
+
+  scale_x_log10()
+
+
+
+p3 <- logs %>%
+
+  ggplot(aes(num_unq)) +
+
+  geom_vline(xintercept = median(logs$num_unq), linetype = 2) +
+
+  geom_histogram(binwidth = .05, fill = "red", alpha = 0.7) +
+
+  scale_x_log10()
+
+
+
+p4 <- logs %>%
+
+  gather(num_25, num_50, num_75, num_985, num_100, key = "slen", value = "cases") %>%
+
+  mutate(slen = fct_relevel(factor(slen),"num_100", after = Inf)) %>%
+
+  ggplot(aes(cases, fill = slen)) +
+
+  geom_density(position = "stack", bw = .1) +
+
+  scale_x_log10(lim = c(1,800)) +
+
+  labs(x = "Number of songs", fill = "% played")
+
+
+
+layout <- matrix(c(1,2,3,4),2,2,byrow=TRUE)
+
+multiplot(p1, p2, p3, p4, layout=layout)
+
+p1 <- 1; p2 <- 1; p3 <- 1; p4 <- 1
+
+```
+
+
+
+We find: 
+
+
+
+- Our sample has between 1 and 16 entries (= days) per user. Single entries make up a large part.
+
+
+
+- The total listening time per day per user (*total\_secs*) is roughly log-normal distributed with a median of about 4600 s (1.3 h; vertical dashed line) and is typically found between 100 s and the 24 h limit of 86400 s. Remember that we have to remove a few erroneous values in order to plot this graph. 
+
+
+
+- Similar to the *total\_secs* also the number of unique songs per day (*num_unq*) benefits from a logarithmic plot. We see that the frequencies first decrease toward about 10 and then rise again up to a median of 19. Afterwards, the frequencies decline swiftly. Users with more than 100 songs per day exist but are relatively rare.
+
+
+
+- The distribution of number of songs played, shown as a stacked density plot for the different percentages of song completion shows notable differences between the groups. Completed songs (*num\_100*) clearly have a broader distribution peaking well above 10, whereas all other groups peak first at a single song and then again at a few more. Only songs with less than 25% listening time contribute notably to the numbers above 10.
+
+
+
+
+
+In addition, here we plot the number of songs played over time together with additional exploration of weekly and monthly numbers:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 10", out.width="100%"}
+
+p1 <- logs %>%
+
+  count(date) %>%
+
+  ggplot(aes(date,n)) +
+
+  geom_line(color = "blue")
+
+
+
+p2 <- logs %>%
+
+  mutate(wday = wday(date, label = TRUE)) %>%
+
+  ggplot(aes(wday, fill = wday)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Day of the week")
+
+
+
+p3 <- logs %>%
+
+  filter(date < ymd("20170101")) %>%
+
+  mutate(month = month(date, label = TRUE)) %>%
+
+  ggplot(aes(month, fill = month)) +
+
+  geom_bar() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Month of the year")
+
+
+
+layout <- matrix(c(1,1,2,3),2,2,byrow=TRUE)
+
+multiplot(p1, p2, p3, layout=layout)
+
+p1 <- 1; p2 <- 1; p3 <- 1; p4 <- 1
+
+
+
+```
+
+
+
+We find:
+
+
+
+- The number of logs over time rises steadily with only occasional short-term fluctuations.
+
+
+
+- There are only marginal differences between the weekday frequencies. During the year, the number entries rises which is consistent with the overall steady trend. For the monthly plot we did not include the first two months of 2017; leaving only the data of the complete years 2015 and 2016.
+
+
+
+
+
+# Data set relations
+
+
+
+After getting an overview of the individual data sets and their properties we will now join multiple data sets for a more detailed analysis.
+
+
+
+## Churn rates
+
+
+
+We begin by visualising the *churn rates*, i.e. how large a percentage of users in a certain category ended up churning.
+
+
+
+
+
+### Members data set
+
+
+
+We start with the *members* data. Note the re-ordering of some of the features according to decreasing churn rate. The error bars correspond to 95% confidence:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 11", out.width="100%"}
+
+p1 <- members %>%
+
+  select(gender, msno) %>%
+
+  filter(gender != "") %>%
+
+  left_join(train, by = "msno") %>%
+
+  filter(!is.na(is_churn)) %>%
+
+  group_by(gender, is_churn) %>%
+
+  count() %>%
+
+  spread(is_churn, n) %>%
+
+  mutate(frac_churn = `1`/(`1`+`0`)*100,
+
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100
+
+         ) %>%
+
+  ggplot(aes(gender, frac_churn, fill = gender)) +
+
+  geom_col() +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7, color = "gray30") +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Gender", y = "Churn [%]")
+
+
+
+p2 <- members %>%
+
+  select(reg_via, msno) %>%
+
+  left_join(train, by = "msno") %>%
+
+  filter(!is.na(is_churn)) %>%
+
+  group_by(reg_via, is_churn) %>%
+
+  count() %>%
+
+  spread(is_churn, n) %>%
+
+  mutate(frac_churn = `1`/(`1`+`0`)*100,
+
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100
+
+         ) %>%
+
+  ggplot(aes(reorder(reg_via, -frac_churn, FUN = max), frac_churn, fill = reg_via)) +
+
+  geom_col() +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7, color = "gray30") +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Registration method", y = "Churn [%]")
+
+
+
+p3 <- members %>%
+
+  select(bd, msno) %>%
+
+  filter(bd > 0 & bd < 100) %>%
+
+  left_join(train, by = "msno") %>%
+
+  filter(!is.na(is_churn)) %>%
+
+  ggplot(aes(bd, fill = is_churn)) +
+
+  geom_density(bw = 1, alpha = 0.5) +
+
+  labs(x = "Age - bd")
+
+
+
+p4 <- members %>%
+
+  select(city, msno) %>%
+
+  left_join(train, by = "msno") %>%
+
+  filter(!is.na(is_churn)) %>%
+
+  group_by(city, is_churn) %>%
+
+  count() %>%
+
+  spread(is_churn, n) %>%
+
+  mutate(frac_churn = `1`/(`1`+`0`)*100,
+
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100
+
+         ) %>%
+
+  ggplot(aes(reorder(city, -frac_churn, FUN = max), frac_churn, fill = city)) +
+
+  geom_col() +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7, color = "gray30") +
+
+  theme(legend.position = "none") +
+
+  labs(x = "City", y = "Churn [%]")
+
+
+
+layout <- matrix(c(1,2,3,4),2,2,byrow=TRUE)
+
+multiplot(p1, p2, p4, p3, layout=layout)
+
+```
+
+
+
+We find:
+
+
+
+- In terms of *gender*, male users churned slightly more often than female ones. But the numbers are very similar.
+
+
+
+- There are big differences in terms of *registration method*, ranging from a few percent churn rate to almost 20%. Method "7" appears to correlated with the most loyal users, while method "4" has many that are willing to leave the site.
+
+
+
+- The *cities* are quite similar at churn rates between 6% and 12% with the crucial exception of city "1". In this most popular city (see above) the churn rate is significantly lower at around 5%. This has a big impact on the overall churn rate of about 6.4%. Some cities have low numbers in our sample and correspondingly large error bars on their churn fraction.
+
+
+
+- By comparing the density curves of the age distributions (feature *bd*) we find that younger users on average appear to be more likely to churn.
+
+
+
+
+
+We study this last finding in more detail by comparing the empirical cumulative distribution functions (ecdf) for the ages of the users who churned vs those who did not:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 12", fig.height=3, out.width="100%"}
+
+foo <- members %>%
+
+  select(bd, msno) %>%
+
+  filter(bd > 0 & bd < 100) %>%
+
+  left_join(train, by = "msno") %>%
+
+  filter(!is.na(is_churn))
+
+
+
+foo %>%
+
+  ggplot(aes(bd, color = is_churn)) +
+
+  stat_ecdf(geom = "step")
+
+```
+
+
+
+Here the centre of the two distributions signficantly different, albeit by a relatively small amount of only a few years at most. A two-sample Wilcox test confirms the visual impression with very high statistical significance:
+
+
+
+```{r}
+
+utest <- wilcox.test(foo %>% filter(is_churn == 1) %>% .$bd,
+
+                     foo %>% filter(is_churn == 0) %>% .$bd,
+
+                     alternative = "less")
+
+print(utest)
+
+```
+
+
+
+
+
+### User logs data set
+
+
+
+The *user logs* give us the listening behaviour, which we visualise through the number of entries a user has as well as their median listening time and number of unique songs. In addition, we use a facet plot to examine the amount of time listened to a song for the churned vs non-churned users. In this case we pick a random sub-sample of 5% (1e5 observations) of our (already restricted) `user_logs` sample to speed up the processing. Again, we derive the median number of cases for each user and listening duration (from *num\_25* - *num\_100*):
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 13", fig.height=6, out.width="100%"}
+
+p1 <- logs %>%
+
+  group_by(msno) %>%
+
+  summarise(ct = n()) %>%
+
+  mutate(ct = factor(ct)) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  group_by(ct, is_churn) %>%
+
+  count() %>%
+
+  spread(is_churn, n, fill = 0) %>%
+
+  mutate(frac_churn = `1`/(`1`+`0`)*100,
+
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100
+
+         ) %>%
+
+  ggplot(aes(ct, frac_churn, fill = ct)) +
+
+  geom_col() +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7, color = "gray30") +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Number of log entries", y = "Churn [%]")
+
+
+
+p2 <- logs %>%
+
+  filter(abs(total_secs)<1e5) %>%
+
+  group_by(msno) %>%
+
+  summarise(med_secs = median(total_secs)) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  ggplot(aes(med_secs, fill = is_churn)) +
+
+  geom_density(alpha = 0.5) +
+
+  scale_x_log10() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Median listening time per day [s]", y = "Density")
+
+
+
+p3 <- logs %>%
+
+  group_by(msno) %>%
+
+  summarise(med_unq = median(num_unq)) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  ggplot(aes(med_unq, fill = is_churn)) +
+
+  geom_density(alpha = 0.5) +
+
+  scale_x_log10() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Median number of unique songs per day", y = "Density")
+
+
+
+set.seed(4321)
+
+p4 <- logs %>%
+
+  sample_frac(.05) %>%
+
+  group_by(msno) %>%
+
+  summarise(med_25 = median(num_25),
+
+            med_50 = median(num_50),
+
+            med_75 = median(num_75),
+
+            med_985 = median(num_985),
+
+            med_100 = median(num_100)
+
+            ) %>%
+
+  gather(med_25, med_50, med_75, med_985, med_100, key = "slen", value = "cases") %>%
+
+  mutate(slen = fct_relevel(factor(slen),"med_100", after = Inf)) %>%
+
+  filter(cases < 1800 & cases > 0) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  ggplot(aes(cases, fill = is_churn)) +
+
+  geom_density(alpha = 0.5, bw = .2) +
+
+  scale_x_log10() + #lim = c(1,800)) +
+
+  labs(x = "Number of songs", fill = "is_churn") +
+
+  facet_wrap(~ slen, nrow = 1)
+
+
+
+layout <- matrix(c(1,1,2,3,4,4),3,2,byrow=TRUE)
+
+multiplot(p1, p2, p3, p4, layout=layout)
+
+p1 <- 1; p2 <- 1; p3 <- 1; p4 <- 1
+
+```
+
+
+
+We find:
+
+
+
+- The fewer *log data* entries a user has the more likely they are to churn. These differences are relatively small (between about 3% - 8%) but nevertheless significant.
+
+
+
+- The distributions of median listening times (from *total\_secs*) for users who churned vs not churned are practically indistinguishable.
+
+
+
+- The median number of unique songs per user per day (from *num\_unq*) again looks very similar for both samples, with a slight preference of fewer song per day for users who ended up churning. This trend is particularly evident for numbers below 10 where our density binning isolates the single numbers in this visualisation.
+
+
+
+- In terms of the median *listening durations*, with sufficient statistics these distributions appear to be identical for practical purposes. There are two colours used in this facet plot but they overlap so well that we only see them blended with each other. Therefore, there appears to be no difference in the listening behaviour of users who churned compared to those who didn't. This seems consistent with the very similar distributions of median overall listening times. 
+
+
+
+
+
+### Transactions data set
+
+
+
+Now let's check the *transactions* data. Since a user can have multiple entries in this data set we are using the mode for each of the following categories to characterise their churn percentages:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 14", fig.height=6, out.width="100%"}
+
+Mode <- function(x) {
+
+  ux <- unique(x)
+
+  ux[which.max(tabulate(match(x, ux)))]
+
+}
+
+
+
+p1 <- trans %>%
+
+  #sample_n(1e3) %>%
+
+  group_by(msno) %>%
+
+  summarise(auto_renew = Mode(auto_renew)) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  group_by(auto_renew, is_churn) %>%
+
+  count() %>%
+
+  spread(is_churn, n) %>%
+
+  mutate(frac_churn = `1`/(`1`+`0`)*100,
+
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100
+
+         ) %>%
+
+  ggplot(aes(auto_renew, frac_churn, fill = auto_renew)) +
+
+  geom_col() +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7, color = "gray30") +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Auto renew", y = "Churn [%]")
+
+
+
+p2 <- trans %>%
+
+  #sample_n(1e3) %>%
+
+  group_by(msno) %>%
+
+  summarise(is_cancel = Mode(is_cancel)) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  group_by(is_cancel, is_churn) %>%
+
+  count() %>%
+
+  spread(is_churn, n) %>%
+
+  mutate(frac_churn = `1`/(`1`+`0`)*100,
+
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100
+
+         ) %>%
+
+  ggplot(aes(is_cancel, frac_churn, fill = is_cancel)) +
+
+  geom_col() +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7, color = "gray30") +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Cancelled", y = "Churn [%]")
+
+
+
+p3 <- trans %>%
+
+  #sample_n(1e3) %>%
+
+  group_by(msno) %>%
+
+  summarise(pay_met = Mode(pay_met)) %>%
+
+  select(pay_met, msno) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  group_by(pay_met, is_churn) %>%
+
+  count() %>%
+
+  spread(is_churn, n, fill = 0) %>%
+
+  mutate(frac_churn = `1`/(`1`+`0`)*100,
+
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100
+
+         ) %>%
+
+  ggplot(aes(reorder(pay_met, -frac_churn, FUN = max), frac_churn)) +
+
+  geom_point(color = "red") +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7, color = "red") +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Payment method", y = "Churn [%]")
+
+
+
+p4 <- trans %>%
+
+  #sample_n(5e3) %>%
+
+  group_by(msno) %>%
+
+  summarise(pay_days = Mode(payment_plan_days)) %>%
+
+  mutate(pay_days = as.factor(pay_days)) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  group_by(pay_days, is_churn) %>%
+
+  count() %>%
+
+  spread(is_churn, n, fill = 0) %>%
+
+  mutate(frac_churn = `1`/(`1`+`0`)*100,
+
+         lwr = get_binCI(`1`,(`1`+`0`))[[1]]*100,
+
+         upr = get_binCI(`1`,(`1`+`0`))[[2]]*100
+
+         ) %>%
+
+  #filter(upr - lwr < 30) %>%
+
+  ggplot(aes(reorder(pay_days, -frac_churn, FUN = max), frac_churn)) +
+
+  geom_point(color = "blue") +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7, color = "blue") +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Payment plan duration", y = "Churn [%]")
+
+
+
+layout <- matrix(c(1,1,2,3,4,4),3,2,byrow=TRUE)
+
+multiplot(p3, p1, p2, p4, layout=layout)
+
+p1 <- 1; p2 <- 1; p3 <- 1; p4 <- 1
+
+```
+
+
+
+We find:
+
+
+
+- Users who did not choose to *auto\_renew* were clearly more likely to churn. Recall that those are only a small fraction of the total users.
+
+
+
+- In a similar way, the minor percentage of users that did decide to *cancel* their contract manually was on average more likely to leave the website; even though a manual cancellation might also occur during a change in subscription model. The vastly popular payment method "41" is easily in the top 10 of lowest churn.
+
+
+
+- Some *payment\_methods* are clearly associated to more loyal users than others. Note the re-sorting by decreasing churn fraction. Several categories suffer from low-number statistics and the corresponding large error bars. However, among the majority of *methods* we can still see a clear trend from about 40% churn down to almost zero.
+
+
+
+- Also the *payment\_plan\_duration* categories show strong differences in churn percentage. The lowest churn numbers are associated with the 30-day, 31-day, and (surprisingly) the 0-day memberships. The churn percentage for 10-day subscriptions is above 50% and for 7 days above 25%. For this feature as well there are a couple of categories with low number statistics and large uncertainties.
+
+
+
+
+
+# Data cleaning
+
+
+
+Before we proceed with our analysis we will clean our data to remove the obvious outliers. This applies for instance to negative ages or the very early expiration date entries that are not relevant for our analysis.
+
+
+
+```{r}
+
+members <- members %>%
+
+  filter(bd > 10 & bd < 100) #%>%
+
+  #filter(reg_exp > ymd("20140901") & reg_exp < ymd("20180301"))
+
+
+
+```
+
+
+
+
+
+# Multi-feature relations
+
+
+
+After examining the impact of our individual features on the *churn* statistics we will now explore the relations of these features with each other and how these are reflected in the *churn* rates.
+
+
+
+First, we visualise the dependence of the registration method (*reg\_via*) and *city* on the age distribution (*bd*). We are using ridgeline plots (*reg\_via*) in combination with boxplots (*city*) and a heatmap to combine the two aspects. Here we also sort the individual distributions by increasing median and add horizontal lines to the joyplot to guide the eye:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 12", out.width="100%"}
+
+p1 <- members %>%
+
+  ggplot(aes(bd, reorder(reg_via, -bd, FUN = median), fill = reg_via)) +
+
+  geom_density_ridges() +
+
+  geom_vline(xintercept = c(19,25), linetype = 2) +
+
+  theme(legend.position = "none") +
+
+  labs(x = "Age", y = "Registration method") +
+
+  ggtitle("Age / city / registration method")
+
+
+
+p2 <- members %>%
+
+  filter(bd < 65) %>%
+
+  ggplot(aes(reorder(city, -bd, FUN = median), bd, fill = city)) +
+
+  geom_boxplot() +
+
+  theme(legend.position = "none") +
+
+  labs(x = "City", y = "Age") +
+
+  coord_flip()
+
+  
+
+p3 <- members %>%
+
+  group_by(city, reg_via) %>%
+
+  summarise(median_age = median(bd)) %>%
+
+  ggplot(aes(city, reg_via, fill = median_age)) +
+
+  geom_tile() +
+
+  labs(x = "City", y = "Registration method", fill = "Median age") +
+
+  scale_fill_distiller(palette = "Spectral")
+
+
+
+
+
+layout <- matrix(c(1,2,1,2,1,2,3,3,3,3),5,2,byrow=TRUE)
+
+multiplot(p1, p2, p3, layout=layout)
+
+p1 <- 1; p2 <- 1; p3 <- 1; p4 <- 1
+
+```
+
+
+
+
+
+We find:
+
+
+
+- There is a clear dependence of the age distribution on the registration method. Younger users are more likely to register through methods "4", "13", and "3" (age peak around 19) than "9" and "7" (peak 25). Given the strong dependence of the *churn rate* on *reg\_via* (see above), this age distribution might be the reason behind the more subtle age difference between churning and non-churning users.
+
+
+
+- The age distributions for the different cities are very similar. There is a slight trend among the medians but all distributions have a large overlap. All cities have a certain number of outliers towards higher ages.
+
+
+
+- The heatmap recovers the lower average age for registration method "4", but more importantly shows the strong inhomogeneities in registration method "13",  as most prominently visible in the difference between cities "17" and "21". However, `reg_via == 13` has only a small number of observations and the resulting fluctuations are likely to be purely random. 
+
+
+
+- We also notice that through the cleaning we have lost methods "10" and "16" (see Fig. 1) which seemed to have mainly produced older or spurious entries.
+
+
+
+
+
+We will also look briefly at the gender distribution among the *members* data in dependence of *city* and *registration method*. Here we indicate the overall gender balance (51.7% male) via a horizontal grey line. We also ignore `reg_via == 13` due to the low number statistics. As usual, the error bars correspond to 95% confidence:
+
+
+
+```{r  split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 13", out.width="100%"}
+
+members %>%
+
+  filter(gender != "") %>%
+
+  filter(reg_via != 13) %>%
+
+  group_by(gender, city, reg_via) %>%
+
+  count() %>%
+
+  spread(gender, n, fill = 0) %>%
+
+  mutate(frac_male = male/(male + female)*100,
+
+         lwr = get_binCI(male,(male+female))[[1]]*100,
+
+         upr = get_binCI(male,(male+female))[[2]]*100
+
+         ) %>%
+
+  ggplot(aes(city, frac_male, color = city)) +
+
+  geom_hline(yintercept = 51.7, linestyle = 1, color = "grey50", alpha = 0.5) +
+
+  geom_point() +
+
+  theme(legend.position = "none") +
+
+  geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.5, size = 0.7) +
+
+  labs(y = "Percentage of male users") +
+
+  facet_wrap(~ reg_via) +
+
+  ggtitle("Male user fraction per city facetted by registration method (95% error bars)")
+
+
+
+
+
+```
+
+
+
+We find:
+
+
+
+- Most *city / reg\_via* combination is consistent with the overall statistics. However, there are significant deviations especially for registration methods "7" and "9".
+
+
+
+- Except for `reg_via == 3` *city* "10" has a higher male user percentage. `city == 9 & reg_via == 9` have the highest (significant) male user fraction of more than 60%.
+
+
+
+- Interestingly, *city* "1" which has by far the highest user base never has an above average male percentage for any *registration method*. For `reg_via == 9` this city actually has a larger *female* percentage than 50% (together with *cities* "5" and "13").
+
+
+
+
+
+Next, we visualise the combinations within the `transactions.csv` data using a comprehensive *count plot*. Here the size (radius) of the points is logarithmically scaled by the size of the corresponding grouping. We put the *payment\_method* on the x-axis, *payment\_plan\_days* on the y-axis, indicated *auto\_renew* by color, and finally facetted by *is\_cancel* into an upper and lower plot. That's quite a bit of information but hopefully the visualisation highlights the important aspects. Note that red is plotted on top of blue but that a slight transparency is applied:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 14", fig.height=6, out.width="100%"}
+
+trans %>%
+
+  mutate(payment_plan_days = factor(payment_plan_days)) %>%
+
+  ggplot(aes(pay_met, payment_plan_days, color = auto_renew)) +
+
+  geom_count(alpha = 0.7) +
+
+  facet_wrap(~ is_cancel, nrow = 2) +
+
+  scale_radius(trans = "log10") +
+
+  ggtitle("Group sizes for cancellation (facets), auto renewal (color), and pay method (x) vs pay days (y)")
+
+```
+
+
+
+We find:
+
+
+
+
+
+- Only a small fraction of possible combinations between *payment\_method\_id* and *payment\_plan\_days* exist in our data; as evidenced by the largely empty graph.
+
+
+
+- There are are only cancellations among the groups that had `auto_renew == 1`; i.e. no red points in the bottom plot. In other words, cancellations only came from users that had auto renewal activated.
+
+
+
+- In the top plot (`is_cancel == 0`) almost all *payment\_methods* are either exclusively associated with *auto\_renewal* ("21" or the most popular "41") or with *no auto renewal* ("17" or "38"). There are a few exceptions such as methods "5", "29", or "36" which mix both colours. 
+
+
+
+- In a similar way, `auto_renew == 1` (blue points) only seems to occur for *paymeny plans* of "0", "30", and "31" days. Since the churn fraction for auto renewal users is much lower, this might be reflected in the low churn for these particular days. Or vice versa.
+
+
+
+
+
+How do the *logs* data fit into all that? In order to figure this out we join our `user_logs` counts, which we found to be the only really useful predictor, with the most useful features from the other data frames. 
+
+
+
+```{r}
+
+foo <- trans %>%
+
+  select(msno, auto_renew, is_cancel, pay_met, payment_plan_days) %>%
+
+  mutate(pay_day = factor(payment_plan_days))
+
+bar <- members %>%
+
+  select(msno, reg_via, gender, city, bd)
+
+
+
+multi <- logs %>%
+
+  group_by(msno) %>%
+
+  summarise(ct = n()) %>%
+
+  mutate(ct = factor(ct)) %>%
+
+  inner_join(train, by = "msno") %>%
+
+  inner_join(foo, by = "msno") %>%
+
+  inner_join(bar, by = "msno")
+
+```
+
+
+
+In the plot below, we visualise these counts in dependence of *payment\_method*, *auto_renew*, and *registration method*:
+
+
+
+```{r split=FALSE, fig.align = 'default', warning = FALSE, fig.cap ="Fig. 15", fig.height=6, out.width="100%"}
+
+multi %>%
+
+  filter(reg_via != "13") %>%
+
+  mutate(ct = as.numeric(ct)) %>%
+
+  ggplot(aes(reorder(pay_met, ct, FUN = median), ct, color = auto_renew)) +
+
+  geom_boxplot() +
+
+  facet_wrap(~ reg_via, ncol = 1) +
+
+  labs(x = "Payment method (reordered)", y = "Number of user_logs entries") +
+
+  ggtitle("Log entries vs payment method (x), auto_renew (color), reg_via (facet)")
+
+```
+
+
+
+We find:
+
+
+
+- *Registration method* "4" has significantly lower *counts* in general, independent of the other features.
+
+
+
+- For groups that share both values the `auto_renew == 0` and `auto_renew == 1` *counts* are comparable within their scatter.
+
+
+
+- The *payment methods* show significant differences in *count* frequency among themselves and also for different *registration methods*. For instance, `pay_met == 29` has generally low counts compared to `pay_met == 22`. In contrast, `pay_met == 30` has on average relatively low counts but considerably more scatter within the different *registration methods*
+
+
+
+
+
+---
+
+
+
+Thank you for the comments, reads, and upvotes!
