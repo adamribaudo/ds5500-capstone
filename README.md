@@ -19,3 +19,4 @@ For the second half of the semester, we’ll focus on deploying our LSTM model to 
 
 ![Cloud Architecture](https://cloud-dot-google-developers.appspot.com/solutions/images/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning-3-ml-automation-ct.svg)
 
+_Source: https://cloud-dot-google-developers.appspot.com/solutions/machine-learning/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning_
