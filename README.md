@@ -24,7 +24,7 @@ A review of the KKBox Kaggle page showed that there is some controversy regardin
 For the second half of the semester, we’ll focus on deploying our model (or potentially models) to GCP. The target architecture will support real-time queries to the model as well as an automated training pipeline. A diagram of this proposed architecture is shown below.
 
 
-![Cloud Architecture](https://cloud-dot-google-developers.appspot.com/solutions/images/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning-3-ml-automation-ct.svg)
+![Cloud Architecture](https://i.imgur.com/YFeR9XH.jpg)
 
 _Source: https://cloud-dot-google-developers.appspot.com/solutions/machine-learning/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning_
 
