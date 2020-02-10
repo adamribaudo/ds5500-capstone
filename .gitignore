@@ -430,6 +430,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*/.ipynb_checkpoints/*
 
 # IPython
 profile_default/
@@ -530,3 +531,4 @@ vignettes/*.pdf
 ds5500-7e5f8aa07468.json
 KKBox R Project/members_existed_before_20160101.csv
 .DS_Store	
+**/.DS_Store
