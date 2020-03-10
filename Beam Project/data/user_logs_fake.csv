@@ -1,0 +1,14 @@
+msno,date,num_25,num_50,num_75,num_985,num_100,num_unq,total_secs
+User A - Churned,20150401,0,0,0,0,1,1,280.335
+User B - Not Churned,20150401,9,1,0,0,7,11,1658.948
+User B - Not Churned,20150402,3,3,0,0,68,36,17364.956
+User C - Churned - Cancel,20150401,0,0,0,0,1,1,280.335
+User C - Churned - Cancel,20150402,9,1,0,0,7,11,1658.948
+User D - Ignored  - No Expr in Feb,20150401,3,3,0,0,68,36,17364.956
+User E - Churned Transactions in Feb,20150401,0,0,0,0,1,1,280.335
+User E - Churned Transactions in Feb,20150401,9,1,0,0,7,11,1658.948
+User F - Not Churned - Transactions in Feb,20150401,3,3,0,0,68,36,17364.956
+User F - Not Churned - Transactions in Feb,20150401,0,0,0,0,1,1,280.335
+User F - Not Churned - Transactions in Feb,20150401,9,1,0,0,7,11,1658.948
+User G - Not Churned - Cold Start Issue,20170101,3,3,0,0,68,36,17364.956
+User H - Not in User Labels,20150401,9,1,0,0,7,11,1658.948

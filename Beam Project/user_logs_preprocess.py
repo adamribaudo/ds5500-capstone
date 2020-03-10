@@ -33,7 +33,6 @@ python hourly_team_score.py \
 """
 
 # pytype: skip-file
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -95,6 +94,36 @@ class ParseUserLogFn(beam.DoFn):
       self.num_parse_errors.inc()
       logging.error('Parse error on "%s"', elem)
 
+class ParseTransactions(beam.DoFn):
+  """Parses the raw transaction data into dictionary.
+
+   msno	payment_method_id	payment_plan_days	plan_list_price	actual_amount_paid	is_auto_renew	transaction_date	membership_expire_date	is_cancel
+  """
+  def __init__(self):
+    # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
+    # super(ParseGameEventFn, self).__init__()
+    beam.DoFn.__init__(self)
+    self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
+
+  def process(self, elem):
+    try:
+      row = list(csv.reader([elem]))[0]
+      yield {
+          'msno': row[0],
+          'payment_method_id': int(row[1]),
+          'payment_plan_days': int(row[2]),
+          'plan_list_price': float(row[3]),
+          'actual_amount_paid': float(row[4]),
+          'is_auto_renew': int(row[5]),
+          'transaction_date': int(row[6]),
+          'membership_expire_date': int(row[7]),
+          'is_cancel': int(row[8])
+      }
+    except:  # pylint: disable=bare-except
+      # Log and count parse errors
+      self.num_parse_errors.inc()
+      logging.error('Parse error on "%s"', elem)
+
 
 class ExtractAndSumScore(beam.PTransform):
   """A transform to extract key/score information and sum the scores.
@@ -108,10 +137,7 @@ class ExtractAndSumScore(beam.PTransform):
     self.field = field
 
   def expand(self, pcoll):
-    return (
-        pcoll
-        | beam.Map(lambda elem: (elem[self.field], elem['score']))
-        | beam.CombinePerKey(sum))
+    return (pcoll | beam.Map(lambda elem: (elem[self.field], elem['score'])) | beam.CombinePerKey(sum))
 
 
 class TeamScoresDict(beam.DoFn):
@@ -155,16 +181,55 @@ class WriteToBigQuery(beam.PTransform):
     return ', '.join('%s:%s' % (col, self.schema[col]) for col in self.schema)
 
   def expand(self, pcoll):
-    return (
-        pcoll
-        | 'ConvertToRow' >>
-        beam.Map(lambda elem: {col: elem[col]
-                               for col in self.schema})
-        | beam.io.WriteToBigQuery(
-            self.table_name, self.dataset, self.project, self.get_schema()))
+    return (pcoll | 'ConvertToRow' >> beam.Map(lambda elem: {col: elem[col]
+                               for col in self.schema}) | beam.io.WriteToBigQuery(self.table_name, self.dataset, self.project, self.get_schema()))
 
+class GenerateLabels(beam.PTransform):
+    def __init__(self, transactions_input):
+        # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
+        # super(HourlyTeamScore, self).__init__()
+        beam.PTransform.__init__(self)
+        self.transactions_input = transactions_input
+    def expand(self, pcoll):
+        transactions = (
+            pcoll | 'Read Transactions' >> beam.io.ReadFromText(self.transactions_input, skip_header_lines=1) 
+        | 'Parse Transactions' >> beam.ParDo(ParseTransactions())
+        )
+      
+        validUsers = (
+            transactions | 'Find Expirations in Feb' >> beam.Filter(lambda elem: elem['membership_expire_date'] >= 20170201 and elem['membership_expire_date'] <= 20170228)
+            | 'Select MSNO Column' >> beam.Map(lambda elem: (elem['msno']))
+            | 'Return Distinct MSNOs' >> beam.transforms.util.Distinct()
+        )
+      
+        transactionsFromValidUsers = (
+        transactions | 'Filter ' >> beam.Filter(
+            lambda transaction,
+            validUsers: transaction['msno'] in validUsers,
+            validUsers=beam.pvalue.AsIter(validUsers),
+            ) 
+        )
 
-# [START main]
+        notChurnedUsers = (
+        transactionsFromValidUsers | 'Filter Transactions in Feb AND Expiration is not Feb' >> 
+        beam.Filter(lambda elem: elem['transaction_date'] >= 20170201 
+                    and elem['transaction_date'] <= 20170331 
+                    and elem['membership_expire_date'] >= 20170301
+                    and elem['is_cancel'] == 0)
+        | 'Select No Churn MSNOs' >> beam.Map(lambda elem: (elem['msno'])) 
+        | 'Return Distinct No Churn MSNOs' >> beam.transforms.util.Distinct()
+            )
+      
+        # Set users in not churned to is_churn = 0 otherwise is_churn = 1
+        userLabels = (
+            validUsers | 'Set is_churn' >> beam.Map(
+            lambda validUser,
+            notChurnedUsers: (validUser,0) if validUser in notChurnedUsers else (validUser,1),
+            notChurnedUsers=beam.pvalue.AsIter(notChurnedUsers),
+            ) 
+            )
+        return userLabels
+
 class HourlyTeamScore(beam.PTransform):
   def __init__(self, start_min, stop_min, window_duration):
     # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
@@ -175,32 +240,25 @@ class HourlyTeamScore(beam.PTransform):
     self.window_duration_in_seconds = window_duration * 60
 
   def expand(self, pcoll):
-    return (
-        pcoll
-        | 'ParseGameEventFn' >> beam.ParDo(ParseGameEventFn())
+    return (pcoll | 'ParseGameEventFn' >> beam.ParDo(ParseGameEventFn())
 
         # Filter out data before and after the given times so that it is not
-        # included in the calculations. As we collect data in batches (say, by
+        # included in the calculations.  As we collect data in batches (say, by
         # day), the batch for the day that we want to analyze could potentially
-        # include some late-arriving data from the previous day. If so, we want
-        # to weed it out. Similarly, if we include data from the following day
+        # include some late-arriving data from the previous day.  If so, we
+        # want
+        # to weed it out.  Similarly, if we include data from the following day
         # (to scoop up late-arriving events from the day we're analyzing), we
         # need to weed out events that fall after the time period we want to
         # analyze.
         # [START filter_by_time_range]
-        | 'FilterStartTime' >>
-        beam.Filter(lambda elem: elem['timestamp'] > self.start_timestamp)
-        | 'FilterEndTime' >>
-        beam.Filter(lambda elem: elem['timestamp'] < self.stop_timestamp)
+        | 'FilterStartTime' >> beam.Filter(lambda elem: elem['timestamp'] > self.start_timestamp) | 'FilterEndTime' >> beam.Filter(lambda elem: elem['timestamp'] < self.stop_timestamp)
         # [END filter_by_time_range]
 
         # [START add_timestamp_and_window]
         # Add an element timestamp based on the event log, and apply fixed
         # windowing.
-        | 'AddEventTimestamps' >> beam.Map(
-            lambda elem: beam.window.TimestampedValue(elem, elem['timestamp']))
-        | 'FixedWindowsTeam' >> beam.WindowInto(
-            beam.window.FixedWindows(self.window_duration_in_seconds))
+        | 'AddEventTimestamps' >> beam.Map(lambda elem: beam.window.TimestampedValue(elem, elem['timestamp'])) | 'FixedWindowsTeam' >> beam.WindowInto(beam.window.FixedWindows(self.window_duration_in_seconds))
         # [END add_timestamp_and_window]
 
         # Extract and sum teamname/score pairs from the event data.
@@ -213,33 +271,27 @@ def run(argv=None, save_main_session=True):
 
   # The default maps to two large Google Cloud Storage files (each ~12GB)
   # holding two subsequent day's worth (roughly) of data.
-  parser.add_argument(
-      '--input',
+  parser.add_argument('--input',
       type=str,
       default='data\\user_logs_small.csv',
       help='Path to the data file(s)')
-  parser.add_argument(
-      '--output',
+  parser.add_argument('--output',
       type=str,
       default='beam_output.csv',
       help='Path to output')
-  parser.add_argument(
-      '--dataset',
+  parser.add_argument('--dataset',
       type=str,
       required=True,
       help='BigQuery Dataset to write tables to. '
       'Must already exist.')
-  parser.add_argument(
-      '--table_name',
+  parser.add_argument('--table_name',
       default='hourly_scores',
       help='The BigQuery table name. Should not already exist.')
-  parser.add_argument(
-      '--window_duration',
+  parser.add_argument('--window_duration',
       type=int,
       default=60,
       help='Numeric value of fixed window duration, in minutes')
-  parser.add_argument(
-      '--start_min',
+  parser.add_argument('--start_min',
       type=str,
       default='1970-01-01-00-00',
       help='String representation of the first minute after '
@@ -247,8 +299,7 @@ def run(argv=None, save_main_session=True):
       'yyyy-MM-dd-HH-mm. Any input data timestamped '
       'prior to that minute won\'t be included in the '
       'sums.')
-  parser.add_argument(
-      '--stop_min',
+  parser.add_argument('--stop_min',
       type=str,
       default='2100-01-01-00-00',
       help='String representation of the first minute for '
@@ -271,21 +322,45 @@ def run(argv=None, save_main_session=True):
   # workflow rely on global context (e.g., a module imported at module level).
   options.view_as(SetupOptions).save_main_session = save_main_session
 
-  with beam.Pipeline(options=options) as p:
-    (  # pylint: disable=expression-not-assigned
-        p
-        # https://beam.apache.org/releases/pydoc/2.19.0/apache_beam.io.textio.html
-        | 'ReadInputText' >> beam.io.ReadFromText(args.input, skip_header_lines=1)
-        | 'ParseUserLogFn' >> beam.ParDo(ParseUserLogFn())
-        | 'ExtractMSNOandDate' >> beam.Map(lambda elem: (elem['msno'], elem['date']))
-        | 'FindMinDate' >> beam.CombinePerKey(min)
-        # TODO, how to work with tuples as key value pair and address them by field name?
-        | 'FilterStartDate' >> beam.Filter(lambda elem: elem[1] <= 20150501)
-        # TODO: group by MSNO and min(date) to filter users with a min(date) > somethreshold
-        | 'WriteUserLogs' >> beam.io.WriteToText(args.output)
-    )
+        ## https://beam.apache.org/releases/pydoc/2.19.0/apache_beam.io.textio.html
+        #| 'ReadInputText' >> beam.io.ReadFromText(args.input,
+        #skip_header_lines=1)
+        #| 'ParseUserLogFn' >> beam.ParDo(ParseUserLogFn())
+        #| 'ExtractMSNOandDate' >> beam.Map(lambda elem: (elem['msno'],
+        #elem['date']))
+        #| 'FindMinDate' >> beam.CombinePerKey(min)
+        ## TODO, how to work with tuples as key value pair and address them by
+        ## field name?
+        ## TODO, replace date with argument
+        #| 'FilterStartDate' >> beam.Filter(lambda elem: elem[1] <= 20150501)
+        ## TODO: group by MSNO and min(date) to filter users with a min(date) >
+        ## somethreshold
+        #| 'WriteUserLogs' >> beam.io.WriteToText(args.output)
 
-# [END main]
+  with beam.Pipeline(options=options) as p:
+      
+      # TODO input from BQ
+
+      # Generate user labels based on transaction data
+      userLabelsFromTransactions = (
+        p | GenerateLabels("data\\transactions_fake.csv")
+      )
+
+      # validUsersFromUserLogs
+      # Filter to users with min dates >= 20160201
+
+      # validUserLabels
+      # Subset of userLabelsFromTransactions that are also validUsersFromUserLogs
+
+      # Split to train, validation, test data
+
+      # Feature engineering
+      #     TODO emailed Zhengye about calculations here
+
+      # TODO output to BQ
+      #output = (
+      #      expirationCounts | 'WriteTransactions' >> beam.io.WriteToText("output\\transactions.txt")
+      #  )
 
 if __name__ == '__main__':
   logging.getLogger().setLevel(logging.INFO)

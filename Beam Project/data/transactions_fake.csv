@@ -1,0 +1,15 @@
+msno,payment_method_id,payment_plan_days,plan_list_price,actual_amount_paid,is_auto_renew,transaction_date,membership_expire_date,is_cancel
+User A - Churned,32,90,298,298,0,20170131,20170204,0
+User B - Not Churned,36,30,180,180,0,20170201,20170202,0
+User B - Not Churned,36,30,180,180,0,20170329,20170331,0
+User C - Churned - Cancel,32,90,298,298,0,20170201,20170206,0
+User C - Churned - Cancel,41,30,149,149,0,20170208,20190412,1
+User D - Ignored  - No Expr in Feb,41,30,149,149,0,20170209,20190412,0
+User D - Ignored  - No Expr in Feb,41,30,149,149,0,20170301,20190302,0
+User E - Churned Transactions in Feb,41,30,149,149,0,20170201,20170202,0
+User E - Churned Transactions in Feb,41,30,149,149,0,20170202,20170203,0
+User F - Not Churned - Transactions in Feb,41,30,149,149,0,20170201,20170202,0
+User F - Not Churned - Transactions in Feb,41,30,149,149,0,20170202,20170203,0
+User F - Not Churned - Transactions in Feb,41,30,149,149,0,20170204,20170503,0
+User G - Not Churned - Cold Start Issue,36,30,180,180,0,20170201,20170202,0
+User G - Not Churned - Cold Start Issue,36,30,180,180,0,20170329,20170331,0
