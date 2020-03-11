@@ -85,12 +85,12 @@ https://github.com/GoogleCloudPlatform/ai-platform-samples/tree/master/training/
 
 
 
-|   Model / Type  |        Approach        | Training Parameters |   F1   |
-|:---------------:|:----------------------:|---------------------|:------:|
-|  LR / Aggregate | 1. All Data            |         144         | 0.4552 |
-|  LR / Aggregate | 2. User-Logs           |          24         | 0.1296 |
-| DNN /Sequential | 1. All Data(Weekly)    |        8,385        | 0.3137 |
-| DNN /Sequential | 2a. User-Logs (Weekly) |   5,161(32 weeks)   | 0.1936 |
-| DNN /Sequential | 2b. User-Logs (Daily)  |   5,161(215 days)   | 0.2019 |
+|   Model / Type  |        Approach        | Training Parameters   |   F1   |
+|:---------------:|:----------------------:|:---------------------:|:------:|
+|  LR / Aggregate | 1. All Data            |144                    | 0.4552 |
+|  LR / Aggregate | 2. User-Logs           |24                     | 0.1296 |
+| DNN /Sequential | 1. All Data(Weekly)    |8,385                  | 0.3137 |
+| DNN /Sequential | 2a. User-Logs (Weekly) |5,161(32 weeks)        | 0.1936 |
+| DNN /Sequential | 2b. User-Logs (Daily)  |5,161(215 days)        | 0.2019 |
             Table 2: Final results from all models in phase 1
 
