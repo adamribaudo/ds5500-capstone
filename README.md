@@ -84,6 +84,7 @@ https://github.com/GoogleCloudPlatform/ai-platform-samples/tree/master/training/
                         Table 1: KKBox Datasets
 
 
+
 |   Model / Type  |        Approach        | Training Parameters |   F1   |
 |:---------------:|:----------------------:|---------------------|:------:|
 |  LR / Aggregate | 1. All Data            |         144         | 0.4552 |
