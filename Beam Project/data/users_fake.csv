@@ -1,0 +1,10 @@
+msno,city,bd,gender,registered_via,registration_init_time
+User A - Churned,1,34,,11,20110911
+User B - Not Churned,2,19,,9,20110914
+User C - Churned - Cancel,3,63,female,9,20110915
+User D - Ignored  - No Expr in Feb,4,0,male,7,20110915
+User E - Churned Transactions in Feb,5,18,,9,20110915
+User F - Not Churned - Transactions in Feb,6,34,,9,20110915
+User G - Not Churned - Cold Start Issue,7,28,,11,20110915
+User H - Not in User Labels,7,28,,11,20110915
+User I - Not Churned - Always Auto-Renew,8,29,,11,20110915

@@ -13,3 +13,5 @@ User F - Not Churned - Transactions in Feb,41,30,149,149,0,20170202,20170203,0
 User F - Not Churned - Transactions in Feb,41,30,149,149,0,20170204,20170503,0
 User G - Not Churned - Cold Start Issue,36,30,180,180,0,20170201,20170202,0
 User G - Not Churned - Cold Start Issue,36,30,180,180,0,20170329,20170331,0
+User I - Not Churned - Always Auto-Renew,36,30,200,180,1,20170201,20170202,0
+User I - Not Churned - Always Auto-Renew,36,30,200,180,1,20170329,20170331,0
