@@ -9,13 +9,24 @@ import logging
 import sys
 import time
 from datetime import datetime
-
+from random import random
+import os
 import apache_beam as beam
 from apache_beam.metrics.metric import Metrics
 from apache_beam.options.pipeline_options import GoogleCloudOptions
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import SetupOptions
 
+# Set GCP credentials
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\Owner\\Google Drive\\Northeastern\\DS 5500 Capstone\\ds5500-capstone\\ds5500-7e5f8aa07468.json"
+
+# TODO paramaterize these
+project_dataset = "ds5500:beam."
+user_logs_tbl = project_dataset  + "user_logs_fake"
+users_tbl = project_dataset + "users_fake"
+users_output_schema = "msno:STRING,city:INTEGER,bd:INTEGER,gender:STRING,registered_via:INTEGER,registration_init_time:INTEGER"
+users_output_tbl = project_dataset + "users_fake_output"
+transactions_tbl = project_dataset + "transactions_fake"
 
 class AverageFn(beam.CombineFn):
   def create_accumulator(self):
@@ -32,18 +43,6 @@ class AverageFn(beam.CombineFn):
   def extract_output(self, sum_count):
     (sum, count) = sum_count
     return sum / count if count else float('NaN')
-
-def str2timestamp(s, fmt='%Y-%m-%d-%H-%M'):
-  """Converts a string into a unix timestamp."""
-  dt = datetime.strptime(s, fmt)
-  epoch = datetime.utcfromtimestamp(0)
-  return (dt - epoch).total_seconds()
-
-
-def timestamp2str(t, fmt='%Y-%m-%d %H:%M:%S.000'):
-  """Converts a unix timestamp into a formatted string."""
-  return datetime.fromtimestamp(t).strftime(fmt)
-
 
 class ParseUserLogFn(beam.DoFn):
   """Parses the raw user log data into dictionary.
@@ -83,7 +82,6 @@ class ParseTransactions(beam.DoFn):
   """
   def __init__(self):
     # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
-    # super(ParseGameEventFn, self).__init__()
     beam.DoFn.__init__(self)
     self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
 
@@ -107,6 +105,25 @@ class ParseTransactions(beam.DoFn):
       self.num_parse_errors.inc()
       logging.error('Parse error on "%s"', elem)
 
+class ParseTransactionsBQ(beam.DoFn):
+  """Parses the raw transaction data into dictionary.
+
+   msno	payment_method_id	payment_plan_days	plan_list_price	actual_amount_paid	is_auto_renew	transaction_date	membership_expire_date	is_cancel
+  """
+  def __init__(self):
+    # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
+    # super(ParseGameEventFn, self).__init__()
+    beam.DoFn.__init__(self)
+    self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
+
+  def process(self, elem):
+    try:
+      elem["discount_amount"] = float(elem["plan_list_price"]) - float(elem["actual_amount_paid"])
+      yield elem
+    except:  # pylint: disable=bare-except
+      # Log and count parse errors
+      self.num_parse_errors.inc()
+      logging.error('Parse error on "%s"', elem)
 class ParseUsers(beam.DoFn):
   """Parses the raw user data into dictionary.
 
@@ -130,25 +147,39 @@ class ParseUsers(beam.DoFn):
           'registered_via': int(row[4]),
           'registration_init_time': int(row[5])
       })
+
     except:  # pylint: disable=bare-except
       # Log and count parse errors
       self.num_parse_errors.inc()
       logging.error('Parse error on "%s"', elem)
 
+class ParseUsersBQ(beam.DoFn):
+  """Parses the BQ rows into key, value pairs.
 
-class ExtractAndSumScore(beam.PTransform):
-  """A transform to extract key/score information and sum the scores.
-  The constructor argument `field` determines whether 'team' or 'user' info is
-  extracted.
+   msno	city	bd	gender	registered_via	registration_init_time
   """
-  def __init__(self, field):
+  def __init__(self):
     # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
-    # super(ExtractAndSumScore, self).__init__()
-    beam.PTransform.__init__(self)
-    self.field = field
+    # super(ParseGameEventFn, self).__init__()
+    beam.DoFn.__init__(self)
+    self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
 
-  def expand(self, pcoll):
-    return (pcoll | beam.Map(lambda elem: (elem[self.field], elem['score'])) | beam.CombinePerKey(sum))
+  def process(self, elem):
+    try:
+      
+      msno = elem["msno"]
+      yield (msno,
+             {
+          'city': int(elem["city"]),
+          'bd': int(elem["bd"]),
+          'registered_via': int(elem["registered_via"]),
+          'registration_init_time': int(elem["registration_init_time"])
+      })
+    except:  # pylint: disable=bare-except
+      # Log and count parse errors
+      self.num_parse_errors.inc()
+      logging.error('Parse error on "%s"', elem)
+
 
 # Join together user labels and valid users and return the subset that match (similar to inner join)
 class InnerJoinValidUsers(beam.DoFn):
@@ -176,69 +207,26 @@ class WriteToBigQuery(beam.PTransform):
     # super(WriteToBigQuery, self).__init__()
     beam.PTransform.__init__(self)
     self.table_name = table_name
-    self.dataset = dataset
     self.schema = schema
-    self.project = project
-
-  def get_schema(self):
-    """Build the output table schema."""
-    return ', '.join('%s:%s' % (col, self.schema[col]) for col in self.schema)
 
   def expand(self, pcoll):
     return (pcoll | 'ConvertToRow' >> beam.Map(lambda elem: {col: elem[col]
-                               for col in self.schema}) | beam.io.WriteToBigQuery(self.table_name, self.dataset, self.project, self.get_schema()))
+                               for col in self.schema}) | beam.io.WriteToBigQuery(table=self.table_name,schema=self.schema))
 
 class GenerateValidUsersFromLogs(beam.PTransform):
-    def __init__(self, logs_input, min_date):
+    def __init__(self, min_date):
         # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
         # super(HourlyTeamScore, self).__init__()
         beam.PTransform.__init__(self)
-        self.logs_input = logs_input
         self.min_date = min_date
     def expand(self, pcoll):
-        return (pcoll | 'ReadInputText' >> beam.io.ReadFromText(self.logs_input,skip_header_lines=1)
-            | 'ParseUserLogFn' >> beam.ParDo(ParseUserLogFn())
+        return (pcoll | 'ReadInputText' >> beam.io.Read(beam.io.BigQuerySource(table=user_logs_tbl))
             | 'ExtractMSNOandDate' >> beam.Map(lambda elem: (elem['msno'],elem['date']))
             | 'FindMinDate' >> beam.CombinePerKey(min)
             | 'FilterStartDate' >> beam.Filter(lambda elem: elem[1] <= self.min_date)
-            #| beam.Keys() # returning key,value pair for later CoGroupByKey
         )
 
-class HourlyTeamScore(beam.PTransform):
-  def __init__(self, start_min, stop_min, window_duration):
-    # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
-    # super(HourlyTeamScore, self).__init__()
-    beam.PTransform.__init__(self)
-    self.start_timestamp = str2timestamp(start_min)
-    self.stop_timestamp = str2timestamp(stop_min)
-    self.window_duration_in_seconds = window_duration * 60
 
-  def expand(self, pcoll):
-    return (pcoll | 'ParseGameEventFn' >> beam.ParDo(ParseGameEventFn())
-
-        # Filter out data before and after the given times so that it is not
-        # included in the calculations.  As we collect data in batches (say, by
-        # day), the batch for the day that we want to analyze could potentially
-        # include some late-arriving data from the previous day.  If so, we
-        # want
-        # to weed it out.  Similarly, if we include data from the following day
-        # (to scoop up late-arriving events from the day we're analyzing), we
-        # need to weed out events that fall after the time period we want to
-        # analyze.
-        # [START filter_by_time_range]
-        | 'FilterStartTime' >> beam.Filter(lambda elem: elem['timestamp'] > self.start_timestamp) | 'FilterEndTime' >> beam.Filter(lambda elem: elem['timestamp'] < self.stop_timestamp)
-        # [END filter_by_time_range]
-
-        # [START add_timestamp_and_window]
-        # Add an element timestamp based on the event log, and apply fixed
-        # windowing.
-        | 'AddEventTimestamps' >> beam.Map(lambda elem: beam.window.TimestampedValue(elem, elem['timestamp'])) | 'FixedWindowsTeam' >> beam.WindowInto(beam.window.FixedWindows(self.window_duration_in_seconds))
-        # [END add_timestamp_and_window]
-
-        # Extract and sum teamname/score pairs from the event data.
-        | 'ExtractAndSumScore' >> ExtractAndSumScore('team'))
-
-from random import random
 def train_test_split(user, num_partitions):
     rand_float = random()
     # train,val,test:.6, .2, .2 split
@@ -251,11 +239,8 @@ def train_test_split(user, num_partitions):
 
 
 def run(argv=None, save_main_session=True):
-  """Main entry point; defines and runs the hourly_team_score pipeline."""
   parser = argparse.ArgumentParser()
 
-  # The default maps to two large Google Cloud Storage files (each ~12GB)
-  # holding two subsequent day's worth (roughly) of data.
   parser.add_argument('--input',
       type=str,
       default='data\\user_logs_small.csv',
@@ -289,23 +274,23 @@ def run(argv=None, save_main_session=True):
 
   with beam.Pipeline(options=options) as p:
       
-      # TODO input from BQ
-      
-      # Read raw users
+      # Read users from BQ
       users = (
-          p | 'Read Users' >> beam.io.ReadFromText("data\\users_fake.csv", skip_header_lines=1) 
-        | 'Parse Users' >> beam.ParDo(ParseUsers())
+          p | 'Query Users table in BQ' >> beam.io.Read(beam.io.BigQuerySource(table=users_tbl)) 
+        | 'Parse Users' >> beam.ParDo(ParseUsersBQ())
         )
 
       # Read raw transactions
       transactions = (
-            p | 'Read Transactions' >> beam.io.ReadFromText("data\\transactions_fake.csv", skip_header_lines=1) 
-        | 'Parse Transactions' >> beam.ParDo(ParseTransactions())
+            p | 'Query Transactions table in BQ' >> beam.io.Read(beam.io.BigQuerySource(table=transactions_tbl))
+            | beam.ParDo(ParseTransactionsBQ())
         )
-
-      # Find MNSOs with an expiration in the target month
+      
+      ## Find MNSOs with an expiration in the target month
       target_month_start = 20170201
       target_month_end = 20170228
+      final_month_start = 20170303
+      final_month_end = 20170331
       msnosWithValidExpiration = (
             transactions | 'Find Expirations in Feb' >> beam.Filter(lambda elem: elem['membership_expire_date'] >= target_month_start and elem['membership_expire_date'] <= target_month_end)
             | 'Select MSNO Column' >> beam.Map(lambda elem: (elem['msno']))
@@ -324,9 +309,9 @@ def run(argv=None, save_main_session=True):
       # Find users who did not churn based on transaction records to later assign 1 or 0
       notChurnedUsers = (
         transactionsFromUsersWithExpiration | 'Filter Transactions in Feb AND Expiration is not Feb' >> 
-        beam.Filter(lambda elem: elem['transaction_date'] >= 20170201 
-                    and elem['transaction_date'] <= 20170331 
-                    and elem['membership_expire_date'] >= 20170301
+        beam.Filter(lambda elem: elem['transaction_date'] >= target_month_start 
+                    and elem['transaction_date'] <= final_month_end 
+                    and elem['membership_expire_date'] >= final_month_start
                     and elem['is_cancel'] == 0)
         | 'Select No Churn MSNOs' >> beam.Map(lambda elem: (elem['msno'])) 
         | 'Return Distinct No Churn MSNOs' >> beam.transforms.util.Distinct()
@@ -344,10 +329,12 @@ def run(argv=None, save_main_session=True):
       # Generate (msno,min_date) from user logs for users with min_date of <= target_min_log_date
       target_min_log_date = 20150501
       validUsersFromUserLogs = (
-        p | GenerateValidUsersFromLogs("data\\user_logs_fake.csv", target_min_log_date)
+        p | GenerateValidUsersFromLogs(target_min_log_date)
         )
+
       
-      # Generate (msno,is_churn) with inner join between valid users based on transactions and user logs
+      
+      ## Generate (msno,is_churn) with inner join between valid users based on transactions and user logs
       validUserLabels = ({'left': userLabelsFromTransactions, 'right': validUsersFromUserLogs} | beam.CoGroupByKey() | beam.ParDo(InnerJoinValidUsers())
                         )
       
@@ -364,16 +351,10 @@ def run(argv=None, save_main_session=True):
             ) 
         )
 
-      # Partition into train/val/test based on random float
-      train_labels, val_labels, test_labels = (validUserLabels | beam.Partition(train_test_split, 3))
-      
-      #train_labels | beam.Map(lambda x: print('train: {}'.format(x)))
-      #val_labels| beam.Map(lambda x: print('val: {}'.format(x)))
-      #test_labels | beam.Map(lambda x: print('test: {}'.format(x)))
 
-      ###
-      # Feature engineering
-      ###
+      ####
+      ## Feature engineering
+      ####
 
       # Always Auto-Renew: 1 if the user consistently have auto-renew on all transactions. 0 otherwise
       feature_autorenew = (
@@ -384,9 +365,9 @@ def run(argv=None, save_main_session=True):
       transactionsFromValidUsers | beam.Map(lambda x: (x["msno"],x["discount_amount"])) | beam.CombinePerKey(AverageFn())
       )
       
-      ##
-      # Combine all data
-      ##
+      ###
+      ## Combine all data
+      ###
 
       # Combine all user features with users and filter users with no data
       allOutput =( 
@@ -396,14 +377,21 @@ def run(argv=None, save_main_session=True):
            'feature_discount_mean':feature_discount_mean} 
           | "Combine users, labels, and features" >> beam.CoGroupByKey()
           | "Filter out empty entries" >> beam.Filter(lambda x: len(x[1]["is_churn"]) and len(x[1]["user_demo"]) > 0 and len(x[1]["feature_autorenew"]) > 0 and len(x[1]["feature_discount_mean"]) > 0)
-          | beam.Map(print)
+          | "all output print" >> beam.Map(print) 
       )
+
+      # partition into train/val/test based on random float
+      #train_labels, val_labels, test_labels = (allOutput | beam.partition(train_test_split, 3))
       
+      ##train_labels | beam.Map(lambda x: print('train: {}'.format(x)))
+      ##val_labels| beam.Map(lambda x: print('val: {}'.format(x)))
+      ##test_labels | beam.Map(lambda x: print('test: {}'.format(x)))
+
       # TODO output to BQ
       #output = (
       #      expirationCounts | 'WriteTransactions' >> beam.io.WriteToText("output\\transactions.txt")
       #  )
 
 if __name__ == '__main__':
-  logging.getLogger().setLevel(logging.WARNING)
+  logging.getLogger().setLevel(logging.INFO)
   run()
