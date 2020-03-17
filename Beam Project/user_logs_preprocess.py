@@ -27,6 +27,10 @@ users_tbl = project_dataset + "users_fake"
 users_output_schema = "msno:STRING,city:INTEGER,bd:INTEGER,gender:STRING,registered_via:INTEGER,registration_init_time:INTEGER"
 users_output_tbl = project_dataset + "users_fake_output"
 transactions_tbl = project_dataset + "transactions_fake"
+features_output_schema = "msno:STRING,city:INTEGER,is_churn:INTEGER,feature_discount_mean:FLOAT64"
+features_output_train_tbl = project_dataset + "features_output_train"
+features_output_val_tbl = project_dataset + "features_output_val"
+features_output_test_tbl = project_dataset + "features_output_test"
 
 class AverageFn(beam.CombineFn):
   def create_accumulator(self):
@@ -193,26 +197,6 @@ class InnerJoinValidUsers(beam.DoFn):
         # TODO not sure why I need to use 0 index on is_churn
         yield (msno,is_churn[0])
 
-class WriteToBigQuery(beam.PTransform):
-  """Generate, format, and write BigQuery table row information."""
-  def __init__(self, table_name, dataset, schema, project):
-    """Initializes the transform.
-    Args:
-      table_name: Name of the BigQuery table to use.
-      dataset: Name of the dataset to use.
-      schema: Dictionary in the format {'column_name': 'bigquery_type'}
-      project: Name of the Cloud project containing BigQuery table.
-    """
-    # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
-    # super(WriteToBigQuery, self).__init__()
-    beam.PTransform.__init__(self)
-    self.table_name = table_name
-    self.schema = schema
-
-  def expand(self, pcoll):
-    return (pcoll | 'ConvertToRow' >> beam.Map(lambda elem: {col: elem[col]
-                               for col in self.schema}) | beam.io.WriteToBigQuery(table=self.table_name,schema=self.schema))
-
 class GenerateValidUsersFromLogs(beam.PTransform):
     def __init__(self, min_date):
         # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
@@ -332,8 +316,6 @@ def run(argv=None, save_main_session=True):
         p | GenerateValidUsersFromLogs(target_min_log_date)
         )
 
-      
-      
       ## Generate (msno,is_churn) with inner join between valid users based on transactions and user logs
       validUserLabels = ({'left': userLabelsFromTransactions, 'right': validUsersFromUserLogs} | beam.CoGroupByKey() | beam.ParDo(InnerJoinValidUsers())
                         )
@@ -377,20 +359,20 @@ def run(argv=None, save_main_session=True):
            'feature_discount_mean':feature_discount_mean} 
           | "Combine users, labels, and features" >> beam.CoGroupByKey()
           | "Filter out empty entries" >> beam.Filter(lambda x: len(x[1]["is_churn"]) and len(x[1]["user_demo"]) > 0 and len(x[1]["feature_autorenew"]) > 0 and len(x[1]["feature_discount_mean"]) > 0)
-          | "all output print" >> beam.Map(print) 
-      )
+          | "Flatten data to single dictionary for BQ" >> beam.Map(lambda x: {"msno":x[0], 
+                                                                              "city":x[1]["user_demo"][0]["bd"],
+                                                                              "is_churn":x[1]["is_churn"][0],
+                                                                              "feature_discount_mean":x[1]["feature_discount_mean"][0]
+                                                                              })
+          ) 
 
       # partition into train/val/test based on random float
-      #train_labels, val_labels, test_labels = (allOutput | beam.partition(train_test_split, 3))
+      train, val, test = (allOutput | beam.Partition(train_test_split, 3))
       
-      ##train_labels | beam.Map(lambda x: print('train: {}'.format(x)))
-      ##val_labels| beam.Map(lambda x: print('val: {}'.format(x)))
-      ##test_labels | beam.Map(lambda x: print('test: {}'.format(x)))
-
-      # TODO output to BQ
-      #output = (
-      #      expirationCounts | 'WriteTransactions' >> beam.io.WriteToText("output\\transactions.txt")
-      #  )
+      #output to BQ
+      val| "Validation output" >> beam.io.WriteToBigQuery(table=features_output_val_tbl,schema=features_output_schema)
+      train | "Training output" >> beam.io.WriteToBigQuery(table=features_output_train_tbl,schema=features_output_schema)
+      test | "Testing output" >> beam.io.WriteToBigQuery(table=features_output_test_tbl,schema=features_output_schema)
 
 if __name__ == '__main__':
   logging.getLogger().setLevel(logging.INFO)
