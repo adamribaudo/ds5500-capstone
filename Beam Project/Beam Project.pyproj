@@ -13,7 +13,7 @@
     <RootNamespace>Beam Project</RootNamespace>
     <InterpreterId>MSBuild|ds5500-vs-env|$(MSBuildProjectFullPath)</InterpreterId>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <CommandLineArguments>--project ds5500 --dataset beam</CommandLineArguments>
+    <CommandLineArguments>--project ds5500 --dataset beam --runner DataflowRunner</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
     <SuppressPackageInstallationPrompt>True</SuppressPackageInstallationPrompt>
   </PropertyGroup>

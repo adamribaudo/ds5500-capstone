@@ -21,16 +21,18 @@ from apache_beam.options.pipeline_options import SetupOptions
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\Owner\\Google Drive\\Northeastern\\DS 5500 Capstone\\ds5500-capstone\\ds5500-7e5f8aa07468.json"
 
 # TODO paramaterize these
-project_dataset = "ds5500:beam."
-user_logs_tbl = project_dataset  + "user_logs_fake"
-users_tbl = project_dataset + "users_fake"
+project_input_dataset = "ds5500:kkbox."#"ds5500:beam." #"ds5500:kkbox."
+user_logs_tbl = project_input_dataset  + "user_logs_dataprep"#"user_logs_fake" # "user_logs_dataprep"
+users_tbl = project_input_dataset + "members"#"users_fake" # "members"
+transactions_tbl = project_input_dataset + "transactions_v2"#"transactions_fake" # "transactions_v2"
+
+project_output_dataset = "ds5500:beam."
 users_output_schema = "msno:STRING,city:INTEGER,bd:INTEGER,gender:STRING,registered_via:INTEGER,registration_init_time:INTEGER"
-users_output_tbl = project_dataset + "users_fake_output"
-transactions_tbl = project_dataset + "transactions_fake"
+users_output_tbl = project_output_dataset + "users_fake_output"
 features_output_schema = "msno:STRING,city:INTEGER,is_churn:INTEGER,feature_discount_mean:FLOAT64"
-features_output_train_tbl = project_dataset + "features_output_train"
-features_output_val_tbl = project_dataset + "features_output_val"
-features_output_test_tbl = project_dataset + "features_output_test"
+features_output_train_tbl = project_output_dataset + "features_output_train"
+features_output_val_tbl = project_output_dataset + "features_output_val"
+features_output_test_tbl = project_output_dataset + "features_output_test"
 
 class AverageFn(beam.CombineFn):
   def create_accumulator(self):
@@ -116,13 +118,21 @@ class ParseTransactionsBQ(beam.DoFn):
   """
   def __init__(self):
     # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
-    # super(ParseGameEventFn, self).__init__()
     beam.DoFn.__init__(self)
     self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
 
   def process(self, elem):
     try:
+      elem["payment_method_id"] = int(elem["payment_method_id"])
+      elem["payment_plan_days"] = int(elem["payment_plan_days"])
+      elem["plan_list_price"] = float(elem["plan_list_price"])
+      elem["actual_amount_paid"] = float(elem["actual_amount_paid"])
+      elem["is_auto_renew"] = int(elem["is_auto_renew"])
+      elem["transaction_date"] = int(elem["transaction_date"])
+      elem["membership_expire_date"] = int(elem["membership_expire_date"])
+      elem["is_cancel"] = int(elem["is_cancel"])
       elem["discount_amount"] = float(elem["plan_list_price"]) - float(elem["actual_amount_paid"])
+
       yield elem
     except:  # pylint: disable=bare-except
       # Log and count parse errors
@@ -204,8 +214,9 @@ class GenerateValidUsersFromLogs(beam.PTransform):
         beam.PTransform.__init__(self)
         self.min_date = min_date
     def expand(self, pcoll):
-        return (pcoll | 'ReadInputText' >> beam.io.Read(beam.io.BigQuerySource(table=user_logs_tbl))
-            | 'ExtractMSNOandDate' >> beam.Map(lambda elem: (elem['msno'],elem['date']))
+        # TODO user logs data in BQ uses DATETIME for the 'date' column
+        return (pcoll | 'Read User Logs from BQ' >> beam.io.Read(beam.io.BigQuerySource(table=user_logs_tbl))
+            | 'ExtractMSNOandDate' >> beam.Map(lambda elem: (elem['msno'],int(elem['date'])))
             | 'FindMinDate' >> beam.CombinePerKey(min)
             | 'FilterStartDate' >> beam.Filter(lambda elem: elem[1] <= self.min_date)
         )
@@ -225,14 +236,6 @@ def train_test_split(user, num_partitions):
 def run(argv=None, save_main_session=True):
   parser = argparse.ArgumentParser()
 
-  parser.add_argument('--input',
-      type=str,
-      default='data\\user_logs_small.csv',
-      help='Path to the data file(s)')
-  parser.add_argument('--output',
-      type=str,
-      default='beam_output.csv',
-      help='Path to output')
   parser.add_argument('--dataset',
       type=str,
       required=True,
@@ -242,12 +245,21 @@ def run(argv=None, save_main_session=True):
       default='hourly_scores',
       help='The BigQuery table name. Should not already exist.')
 
+
   args, pipeline_args = parser.parse_known_args(argv)
 
   options = PipelineOptions(pipeline_args)
 
+  google_cloud_options = options.view_as(GoogleCloudOptions)
+
+  google_cloud_options.staging_location = 'gs://arr-beam-test/temp'
+  google_cloud_options.temp_location = 'gs://arr-beam-test/temp'
+  # look into not using public IPs 
+  # https://cloud.google.com/dataflow/docs/guides/specifying-exec-params
+  # no_use_public_ips The public IPs parameter requires the Beam SDK for Python. The Dataflow SDK for Python does not support this parameter.	
+
   # We also require the --project option to access --dataset
-  if options.view_as(GoogleCloudOptions).project is None:
+  if google_cloud_options.project is None:
     parser.print_usage()
     print(sys.argv[0] + ': error: argument --project is required')
     sys.exit(1)
@@ -257,7 +269,6 @@ def run(argv=None, save_main_session=True):
   options.view_as(SetupOptions).save_main_session = save_main_session
 
   with beam.Pipeline(options=options) as p:
-      
       # Read users from BQ
       users = (
           p | 'Query Users table in BQ' >> beam.io.Read(beam.io.BigQuerySource(table=users_tbl)) 
