@@ -21,18 +21,21 @@ from apache_beam.options.pipeline_options import SetupOptions
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\Owner\\Google Drive\\Northeastern\\DS 5500 Capstone\\ds5500-capstone\\ds5500-7e5f8aa07468.json"
 
 # TODO paramaterize these
-project_input_dataset = "ds5500:kkbox."#"ds5500:beam." #"ds5500:kkbox."
-user_logs_tbl = project_input_dataset  + "user_logs_dataprep"#"user_logs_fake" # "user_logs_dataprep"
-users_tbl = project_input_dataset + "members"#"users_fake" # "members"
-transactions_tbl = project_input_dataset + "transactions_v2"#"transactions_fake" # "transactions_v2"
+project_input_dataset = "ds5500:beam." #"ds5500:beam." #"ds5500:kkbox."
+project_input_dataset_standard = "ds5500.beam."
+
+user_logs_tbl = "user_logs_fake" #"user_logs_fake" # "user_logs"
+users_tbl = "users_fake" #"users_fake" # "members"
+transactions_tbl = "transactions_fake" #"transactions_fake" # "transactions_v3"
 
 project_output_dataset = "ds5500:beam."
 users_output_schema = "msno:STRING,city:INTEGER,bd:INTEGER,gender:STRING,registered_via:INTEGER,registration_init_time:INTEGER"
 users_output_tbl = project_output_dataset + "users_fake_output"
-features_output_schema = "msno:STRING,city:INTEGER,is_churn:INTEGER,feature_discount_mean:FLOAT64"
-features_output_train_tbl = project_output_dataset + "features_output_train"
-features_output_val_tbl = project_output_dataset + "features_output_val"
-features_output_test_tbl = project_output_dataset + "features_output_test"
+features_output_schema = "msno:STRING,city:INTEGER,feature_autorenew:INTEGER,feature_discount_mean:FLOAT64,is_churn:INTEGER"
+name_suffix = str(int(datetime.now().timestamp()))
+features_output_train_tbl = project_output_dataset + "features_output_train_" + name_suffix 
+features_output_val_tbl = project_output_dataset + "features_output_val_" + name_suffix 
+features_output_test_tbl = project_output_dataset + "features_output_test_" + name_suffix 
 
 class AverageFn(beam.CombineFn):
   def create_accumulator(self):
@@ -112,12 +115,7 @@ class ParseTransactions(beam.DoFn):
       logging.error('Parse error on "%s"', elem)
 
 class ParseTransactionsBQ(beam.DoFn):
-  """Parses the raw transaction data into dictionary.
-
-   msno	payment_method_id	payment_plan_days	plan_list_price	actual_amount_paid	is_auto_renew	transaction_date	membership_expire_date	is_cancel
-  """
   def __init__(self):
-    # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
     beam.DoFn.__init__(self)
     self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
 
@@ -132,6 +130,8 @@ class ParseTransactionsBQ(beam.DoFn):
       elem["membership_expire_date"] = int(elem["membership_expire_date"])
       elem["is_cancel"] = int(elem["is_cancel"])
       elem["discount_amount"] = float(elem["plan_list_price"]) - float(elem["actual_amount_paid"])
+      elem["registration_init_time"] = int(elem["registration_init_time"])
+      elem["registered_via"] = int(elem["registered_via"])
 
       yield elem
     except:  # pylint: disable=bare-except
@@ -144,8 +144,6 @@ class ParseUsers(beam.DoFn):
    msno	city	bd	gender	registered_via	registration_init_time
   """
   def __init__(self):
-    # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
-    # super(ParseGameEventFn, self).__init__()
     beam.DoFn.__init__(self)
     self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
 
@@ -173,8 +171,6 @@ class ParseUsersBQ(beam.DoFn):
    msno	city	bd	gender	registered_via	registration_init_time
   """
   def __init__(self):
-    # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
-    # super(ParseGameEventFn, self).__init__()
     beam.DoFn.__init__(self)
     self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
 
@@ -189,7 +185,7 @@ class ParseUsersBQ(beam.DoFn):
           'registered_via': int(elem["registered_via"]),
           'registration_init_time': int(elem["registration_init_time"])
       })
-    except:  # pylint: disable=bare-except
+    except:
       # Log and count parse errors
       self.num_parse_errors.inc()
       logging.error('Parse error on "%s"', elem)
@@ -209,12 +205,11 @@ class InnerJoinValidUsers(beam.DoFn):
 
 class GenerateValidUsersFromLogs(beam.PTransform):
     def __init__(self, min_date):
-        # TODO(BEAM-6158): Revert the workaround once we can pickle super() on py3.
-        # super(HourlyTeamScore, self).__init__()
         beam.PTransform.__init__(self)
         self.min_date = min_date
     def expand(self, pcoll):
-        # TODO user logs data in BQ uses DATETIME for the 'date' column
+        
+        # TODO replace this with single BQ query
         return (pcoll | 'Read User Logs from BQ' >> beam.io.Read(beam.io.BigQuerySource(table=user_logs_tbl))
             | 'ExtractMSNOandDate' >> beam.Map(lambda elem: (elem['msno'],int(elem['date'])))
             | 'FindMinDate' >> beam.CombinePerKey(min)
@@ -231,7 +226,6 @@ def train_test_split(user, num_partitions):
         return 1
     else:
         return 2
-
 
 def run(argv=None, save_main_session=True):
   parser = argparse.ArgumentParser()
@@ -254,8 +248,10 @@ def run(argv=None, save_main_session=True):
 
   google_cloud_options.staging_location = 'gs://arr-beam-test/temp'
   google_cloud_options.temp_location = 'gs://arr-beam-test/temp'
+  
   # look into not using public IPs 
   # https://cloud.google.com/dataflow/docs/guides/specifying-exec-params
+  # https://cloud.google.com/dataflow/docs/guides/specifying-networks#public_ip_parameter
   # no_use_public_ips The public IPs parameter requires the Beam SDK for Python. The Dataflow SDK for Python does not support this parameter.	
 
   # We also require the --project option to access --dataset
@@ -269,111 +265,80 @@ def run(argv=None, save_main_session=True):
   options.view_as(SetupOptions).save_main_session = save_main_session
 
   with beam.Pipeline(options=options) as p:
+      
       # Read users from BQ
       users = (
-          p | 'Query Users table in BQ' >> beam.io.Read(beam.io.BigQuerySource(table=users_tbl)) 
-        | 'Parse Users' >> beam.ParDo(ParseUsersBQ())
-        )
+          p | 'Query Users table in BQ' >> beam.io.Read(beam.io.BigQuerySource(table=project_input_dataset+users_tbl))
+          | beam.ParDo(ParseUsersBQ())
+          )
 
-      # Read raw transactions
-      transactions = (
-            p | 'Query Transactions table in BQ' >> beam.io.Read(beam.io.BigQuerySource(table=transactions_tbl))
-            | beam.ParDo(ParseTransactionsBQ())
-        )
-      
       ## Find MNSOs with an expiration in the target month
+      # TODO add this to BQ query and parameterize them
       target_month_start = 20170201
       target_month_end = 20170228
       final_month_start = 20170303
       final_month_end = 20170331
-      msnosWithValidExpiration = (
-            transactions | 'Find Expirations in Feb' >> beam.Filter(lambda elem: elem['membership_expire_date'] >= target_month_start and elem['membership_expire_date'] <= target_month_end)
-            | 'Select MSNO Column' >> beam.Map(lambda elem: (elem['msno']))
-            | 'Return Distinct MSNOs' >> beam.transforms.util.Distinct()
-        )
-      
-      # Filter transactions based on users with correct expiration to help with future filtering of user logs
-      transactionsFromUsersWithExpiration = (
-        transactions | 'Filter transactions on users with valid expirations' >> beam.Filter(
-            lambda transaction,
-            msnosWithValidExpiration: transaction['msno'] in msnosWithValidExpiration,
-            msnosWithValidExpiration=beam.pvalue.AsIter(msnosWithValidExpiration),
-            ) 
-        )
+
+      # Read valid user transactions from BQ
+      tables_dict = {'users_tbl':project_input_dataset_standard+users_tbl,'transactions_tbl':project_input_dataset_standard+transactions_tbl,'user_logs_tbl':project_input_dataset_standard+user_logs_tbl}
+      transactions = (
+          p | 'Query valid user transactions' >> beam.io.Read(beam.io.BigQuerySource(query = 
+            """#standardSQL
+            SELECT t.transaction_date,t.membership_expire_date,t.msno,t.payment_method_id,payment_plan_days,t.plan_list_price,t.actual_amount_paid,t.is_auto_renew,t.is_cancel,m.city,m.bd,m.registered_via,m.registration_init_time
+
+                from `{transactions_tbl}` t
+            INNER JOIN `{users_tbl}` m on t.msno = m.MSNO
+            where t.msno in
+                (SELECT MSNO from `{transactions_tbl}` where membership_expire_date >= 20170201 and membership_expire_date <= 20170228)
+
+            and t.msno in
+                (SELECT MSNO from `{user_logs_tbl}` group by MSNO having min(CAST(date as INT64)) <= 20160301 )  """.format(**tables_dict), use_standard_sql=True)) | beam.ParDo(ParseTransactionsBQ())
+          )
       
       # Find users who did not churn based on transaction records to later assign 1 or 0
-      notChurnedUsers = (
-        transactionsFromUsersWithExpiration | 'Filter Transactions in Feb AND Expiration is not Feb' >> 
+      not_churned_users = (
+        transactions | 'Filter Transactions in Feb AND Expiration is not Feb' >> 
         beam.Filter(lambda elem: elem['transaction_date'] >= target_month_start 
                     and elem['transaction_date'] <= final_month_end 
                     and elem['membership_expire_date'] >= final_month_start
                     and elem['is_cancel'] == 0)
-        | 'Select No Churn MSNOs' >> beam.Map(lambda elem: (elem['msno'])) 
-        | 'Return Distinct No Churn MSNOs' >> beam.transforms.util.Distinct()
+        | 'Create key-value pair with 0 for no churn' >> beam.Map(lambda elem: (elem['msno'],0)) 
             )
       
-      # Set users in not churned to is_churn = 0 otherwise is_churn = 1
-      userLabelsFromTransactions = (
-            msnosWithValidExpiration | 'Set is_churn' >> beam.Map(
-            lambda msnoWithValidExpiration,
-            notChurnedUsers: (msnoWithValidExpiration,0) if msnoWithValidExpiration in notChurnedUsers else (msnoWithValidExpiration,1),
-            notChurnedUsers=beam.pvalue.AsIter(notChurnedUsers),
-            ) 
-            )
-
-      # Generate (msno,min_date) from user logs for users with min_date of <= target_min_log_date
-      target_min_log_date = 20150501
-      validUsersFromUserLogs = (
-        p | GenerateValidUsersFromLogs(target_min_log_date)
-        )
-
-      ## Generate (msno,is_churn) with inner join between valid users based on transactions and user logs
-      validUserLabels = ({'left': userLabelsFromTransactions, 'right': validUsersFromUserLogs} | beam.CoGroupByKey() | beam.ParDo(InnerJoinValidUsers())
-                        )
-      
-      # Generate just the valid MSNOs
-      validMSNOs = validUserLabels | "Get MSNO from valid user labels" >> beam.Keys()
-
-      # Regenerate valid transactions based on new understanding of what a valid user is
-      # TODO make this a class or function
-      transactionsFromValidUsers = (
-        transactions | 'Filter transactions on valid users ' >> beam.Filter(
-            lambda transaction,
-            validMSNOs: transaction['msno'] in validMSNOs,
-            validMSNOs=beam.pvalue.AsIter(validMSNOs),
-            ) 
-        )
-
-
       ####
       ## Feature engineering
       ####
 
       # Always Auto-Renew: 1 if the user consistently have auto-renew on all transactions. 0 otherwise
       feature_autorenew = (
-      transactionsFromValidUsers | beam.Map(lambda x: (x["msno"],x["is_auto_renew"])) | beam.CombinePerKey(min))
+      transactions | beam.Map(lambda x: (x["msno"],x["is_auto_renew"])) | beam.CombinePerKey(min))
 
       # Discount amount mean
       feature_discount_mean = (
-      transactionsFromValidUsers | beam.Map(lambda x: (x["msno"],x["discount_amount"])) | beam.CombinePerKey(AverageFn())
+      transactions | beam.Map(lambda x: (x["msno"],x["discount_amount"])) | beam.CombinePerKey(AverageFn())
       )
       
+      #TODO as a last step, combine notChurnedUsers by key, later set any null values to 1 and assume they churned
+
+
       ###
       ## Combine all data
       ###
 
       # Combine all user features with users and filter users with no data
       allOutput =( 
-          {'is_churn': validUserLabels, 
-           'user_demo': users, 
+          {'user_demo': users, 
            'feature_autorenew':feature_autorenew,
-           'feature_discount_mean':feature_discount_mean} 
+           'feature_discount_mean':feature_discount_mean,
+           'not_churned_users':not_churned_users} 
           | "Combine users, labels, and features" >> beam.CoGroupByKey()
-          | "Filter out empty entries" >> beam.Filter(lambda x: len(x[1]["is_churn"]) and len(x[1]["user_demo"]) > 0 and len(x[1]["feature_autorenew"]) > 0 and len(x[1]["feature_discount_mean"]) > 0)
-          | "Flatten data to single dictionary for BQ" >> beam.Map(lambda x: {"msno":x[0], 
-                                                                              "city":x[1]["user_demo"][0]["bd"],
-                                                                              "is_churn":x[1]["is_churn"][0],
-                                                                              "feature_discount_mean":x[1]["feature_discount_mean"][0]
+          | "Filter out empty entries" >> beam.Filter(lambda x: len(x[1]["user_demo"]) > 0 and len(x[1]["feature_autorenew"]) > 0 and len(x[1]["feature_discount_mean"]) > 0)
+          | "Flatten data to single dictionary for BQ" >> beam.Map(lambda x: {"msno":x[0],
+                                                                              "city":x[1]["user_demo"][0]["city"],
+                                                                              "feature_autorenew":x[1]["feature_autorenew"][0],
+                                                                              "feature_discount_mean":x[1]["feature_discount_mean"][0],
+                                                                              # If there is no entry for this MSNO in 'not_churned_users' then is_churn=1
+                                                                              "is_churn":int(len(x[1]["not_churned_users"])==0)
                                                                               })
           ) 
 
@@ -381,6 +346,8 @@ def run(argv=None, save_main_session=True):
       train, val, test = (allOutput | beam.Partition(train_test_split, 3))
       
       #output to BQ
+      # write_disposition=beam.io.BigQueryDisposition.WRITE_TRUNCATE causes the function to sleep for 150 seconds to wait for delete to finalize before write
+
       val| "Validation output" >> beam.io.WriteToBigQuery(table=features_output_val_tbl,schema=features_output_schema)
       train | "Training output" >> beam.io.WriteToBigQuery(table=features_output_train_tbl,schema=features_output_schema)
       test | "Testing output" >> beam.io.WriteToBigQuery(table=features_output_test_tbl,schema=features_output_schema)
