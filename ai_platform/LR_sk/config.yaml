@@ -1,0 +1,17 @@
+trainingInput:
+  hyperparameters:
+    goal: MAXIMIZE
+    maxTrials: 4
+    maxParallelTrials: 2
+    hyperparameterMetricTag: Model Accuracy
+    params:
+    - parameterName: tol
+      type: DOUBLE
+      minValue: 1e-4
+      maxValue: 1e-3
+      scaleType: UNIT_LINEAR_SCALE
+    - parameterName: C
+      type: DOUBLE
+      minValue: 0.01
+      maxValue: 1000
+      scaleType: UNIT_LOG_SCALE
