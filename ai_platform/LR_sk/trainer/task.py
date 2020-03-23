@@ -9,6 +9,7 @@ from sklearn import model_selection
 from trainer import metadata
 from trainer import model
 from trainer import utils
+from sklearn.metrics import f1_score
 
 def _train_and_evaluate(estimator, output_dir):
     """Runs model training and evaluation.
@@ -30,17 +31,11 @@ def _train_and_evaluate(estimator, output_dir):
 
     estimator.fit(X_train, y_train)
 
-    # Write model and eval metrics to `output_dir`
-    model_output_path = os.path.join(output_dir, 'model',
-                                     metadata.MODEL_FILE_NAME)
-
-    utils.dump_object(estimator, model_output_path)
-
     if metadata.HYPERPARAMTER_TUNING:
         # Note: for now, use `cross_val_score` defaults (i.e. 3-fold)
-        scores = model_selection.cross_val_score(estimator, X_val, y_val, cv=3)
+        score = f1_score(y_val,estimator.predict(X_val))
 
-        logging.info('Scores: %s', scores)
+        logging.info('Score: %s', score)
 
         # The default name of the metric is training/hptuning/metric.
         # We recommend that you assign a custom name
@@ -49,9 +44,15 @@ def _train_and_evaluate(estimator, output_dir):
         # HyperparameterSpec object in the job request to match your chosen name
         hpt = hypertune.HyperTune()
         hpt.report_hyperparameter_tuning_metric(
-            hyperparameter_metric_tag='sk_accuracy',
-            metric_value=np.mean(scores),
-            global_step=100)
+            hyperparameter_metric_tag='F1_SCORE',
+            metric_value=score,
+            global_step=10000)
+    
+    # Write model and eval metrics to `output_dir`
+    model_output_path = os.path.join(output_dir, 'model',metadata.MODEL_FILE_NAME)
+                
+    utils.dump_object(estimator, model_output_path)
+
 
 
 def run_experiment(arguments):
