@@ -15,14 +15,15 @@ def _train_and_evaluate(estimator, output_dir):
     """Runs model training and evaluation.
 
     Args:
-      estimator: (pipeline.Pipeline), Pipeline instance, assemble pre-processing
-        steps and model training
+      estimator: (pipeline.Pipeline), Pipeline instance, in this case, model training
       dataset: (pandas.DataFrame), DataFrame containing training data
       output_dir: (string), directory that the trained model will be exported
 
     Returns:
       None
     """
+    
+    # read in data
     df_train = utils.read_from_bigquery("amiable-octane-267022.census_dataset.Member_4","amiable-octane-267022")
     X_train, y_train =utils._feature_label_split(df_train,"is_churn")
     df_val = utils.read_from_bigquery("amiable-octane-267022.census_dataset.Member_3","amiable-octane-267022")
@@ -32,16 +33,11 @@ def _train_and_evaluate(estimator, output_dir):
     estimator.fit(X_train, y_train)
 
     if metadata.HYPERPARAMTER_TUNING:
-        # Note: for now, use `cross_val_score` defaults (i.e. 3-fold)
         score = f1_score(y_val,estimator.predict(X_val))
 
         logging.info('Score: %s', score)
 
-        # The default name of the metric is training/hptuning/metric.
-        # We recommend that you assign a custom name
-        # The only functional difference is that if you use a custom name,
-        # you must set the hyperparameterMetricTag value in the
-        # HyperparameterSpec object in the job request to match your chosen name
+        #
         hpt = hypertune.HyperTune()
         hpt.report_hyperparameter_tuning_metric(
             hyperparameter_metric_tag='F1_SCORE',
@@ -57,7 +53,6 @@ def _train_and_evaluate(estimator, output_dir):
 
 def run_experiment(arguments):
     """Testbed for running model training and evaluation."""
-    # Get data for training and evaluation
 
     logging.info('Arguments: %s', arguments)
 

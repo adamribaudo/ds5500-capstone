@@ -20,16 +20,20 @@
 export MODEL_VERSION=v1
 export MODEL_NAME='test_sk'
 export MODEL_DIR="gs://example3w/lr/3"
+# export MACHINE_TYPE="machine used for testing"
 
 FRAMEWORK=SCIKIT_LEARN
 
-#echo "First, creating the model resource..."
-#gcloud ai-platform models create ${MODEL_NAME} --regions=${REGION}
+# create the model resource for deploying
+echo "First, creating the model resource..."
+gcloud ai-platform models create ${MODEL_NAME} --regions=${REGION}
 
+# create the model version and load the model used for prediciton to this version
 echo "Second, creating the model version..."
 gcloud ai-platform versions create ${MODEL_VERSION} \
   --model ${MODEL_NAME} \
   --origin ${MODEL_DIR}/model \
   --framework ${FRAMEWORK} \
   --runtime-version=${RUNTIME_VERSION} \
-  --python-version=${PYTHON_VERSION}
+  --python-version=${PYTHON_VERSION} \
+# --machineType=${MACHINE_TYPE}

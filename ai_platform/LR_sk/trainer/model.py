@@ -17,7 +17,6 @@
 
 from sklearn import linear_model
 
-
 def get_estimator(arguments):
     """Generate ML Pipeline which include model training
 
@@ -34,7 +33,7 @@ def get_estimator(arguments):
         penalty="l2",
         tol=arguments.tol,
         C = arguments.C,
-        solver="lbfgs​",
+        solver='lbfgs',
         max_iter=1000
     )
 
