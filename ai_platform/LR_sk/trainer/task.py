@@ -26,22 +26,22 @@ def _train_and_evaluate(estimator, output_dir):
     # read in data
     df_train = utils.read_from_bigquery("amiable-octane-267022.census_dataset.Member_4","amiable-octane-267022")
     X_train, y_train =utils._feature_label_split(df_train,"is_churn")
-    df_val = utils.read_from_bigquery("amiable-octane-267022.census_dataset.Member_3","amiable-octane-267022")
-    X_val, y_val =utils._feature_label_split(df_val,"is_churn")
+    #df_val = utils.read_from_bigquery("amiable-octane-267022.census_dataset.Member_3","amiable-octane-267022")
+    #X_val, y_val =utils._feature_label_split(df_val,"is_churn")
 
 
     estimator.fit(X_train, y_train)
 
     if metadata.HYPERPARAMTER_TUNING:
-        score = f1_score(y_val,estimator.predict(X_val))
+        model_selection.cross_val_score(estimator, X_train, y_train, cv=3,scoring=f1_score)
 
         logging.info('Score: %s', score)
 
-        #
+        #tune hyper
         hpt = hypertune.HyperTune()
         hpt.report_hyperparameter_tuning_metric(
             hyperparameter_metric_tag='F1_SCORE',
-            metric_value=score,
+            metric_value=np.mean(scores),
             global_step=10000)
     
     # Write model and eval metrics to `output_dir`
