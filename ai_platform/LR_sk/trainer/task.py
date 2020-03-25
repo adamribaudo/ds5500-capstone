@@ -36,7 +36,7 @@ def _train_and_evaluate(estimator, output_dir):
     if metadata.HYPERPARAMTER_TUNING:
         scores=model_selection.cross_val_score(estimator, X_train, y_train, cv=3,scoring=f1_scorer)
 
-        logging.info('Score: %s', score)
+        logging.info('Score: %s', scores)
 
         #tune hyper
         hpt = hypertune.HyperTune()
