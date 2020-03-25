@@ -1,14 +1,14 @@
 trainingInput:
   hyperparameters:
     goal: MAXIMIZE
-    maxTrials: 4
-    maxParallelTrials: 2
-    hyperparameterMetricTag: Model Accuracy
+    maxTrials: 10
+    maxParallelTrials: 5
+    hyperparameterMetricTag: F1_SCORE
     params:
     - parameterName: tol
       type: DOUBLE
-      minValue: 1e-4
-      maxValue: 1e-3
+      minValue: 0.00001
+      maxValue: 0.0001
       scaleType: UNIT_LINEAR_SCALE
     - parameterName: C
       type: DOUBLE

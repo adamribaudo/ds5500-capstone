@@ -33,7 +33,9 @@ def get_estimator(arguments):
     classifier = linear_model.LogisticRegression(
         penalty="l2",
         tol=arguments.tol,
-        C = arguments.C
+        C = arguments.C,
+        solver="lbfgs​",
+        max_iter=1000
     )
 
     return classifier

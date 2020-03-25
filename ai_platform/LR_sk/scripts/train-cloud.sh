@@ -21,7 +21,7 @@ echo "Submitting an AI Platform job..."
 
 TIER="BASIC" # BASIC | BASIC_GPU | STANDARD_1 | PREMIUM_1
 
-export MODEL_NAME="loaddata"
+export MODEL_NAME="lr"
 
 PACKAGE_PATH=./trainer # this can be a gcs location to a zipped and uploaded package
 MODEL_DIR=gs://${BUCKET_NAME}/${MODEL_NAME}
@@ -43,6 +43,5 @@ gcloud ai-platform jobs submit training ${JOB_NAME} \
 set -
 
 # Notes:
-# GCS_TAXI_TRAIN_BIG is set by datasets/downlaod-taxi.sh script
 # use --packages instead of --package-path if gcs location
 # add --reuse-job-dir to resume training
