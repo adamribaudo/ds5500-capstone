@@ -9,7 +9,7 @@ from sklearn import model_selection
 from trainer import metadata
 from trainer import model
 from trainer import utils
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, make_scorer
 
 def _train_and_evaluate(estimator, output_dir):
     """Runs model training and evaluation.
@@ -34,7 +34,7 @@ def _train_and_evaluate(estimator, output_dir):
     f1_scorer = make_scorer(f1_score)
 
     if metadata.HYPERPARAMTER_TUNING:
-        model_selection.cross_val_score(estimator, X_train, y_train, cv=3,scoring=f1_scorer)
+        scores=model_selection.cross_val_score(estimator, X_train, y_train, cv=3,scoring=f1_scorer)
 
         logging.info('Score: %s', score)
 
