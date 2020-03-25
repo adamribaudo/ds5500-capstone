@@ -31,9 +31,10 @@ def _train_and_evaluate(estimator, output_dir):
 
 
     estimator.fit(X_train, y_train)
+    f1_scorer = make_scorer(f1_score)
 
     if metadata.HYPERPARAMTER_TUNING:
-        model_selection.cross_val_score(estimator, X_train, y_train, cv=3,scoring=f1_score)
+        model_selection.cross_val_score(estimator, X_train, y_train, cv=3,scoring=f1_scorer)
 
         logging.info('Score: %s', score)
 
