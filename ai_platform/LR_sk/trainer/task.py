@@ -9,43 +9,40 @@ from sklearn import model_selection
 from trainer import metadata
 from trainer import model
 from trainer import utils
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, make_scorer
 
 def _train_and_evaluate(estimator, output_dir):
     """Runs model training and evaluation.
 
     Args:
-      estimator: (pipeline.Pipeline), Pipeline instance, assemble pre-processing
-        steps and model training
+      estimator: (pipeline.Pipeline), Pipeline instance, in this case, model training
       dataset: (pandas.DataFrame), DataFrame containing training data
       output_dir: (string), directory that the trained model will be exported
 
     Returns:
       None
     """
+    
+    # read in data
     df_train = utils.read_from_bigquery("amiable-octane-267022.census_dataset.Member_4","amiable-octane-267022")
     X_train, y_train =utils._feature_label_split(df_train,"is_churn")
-    df_val = utils.read_from_bigquery("amiable-octane-267022.census_dataset.Member_3","amiable-octane-267022")
-    X_val, y_val =utils._feature_label_split(df_val,"is_churn")
+    #df_val = utils.read_from_bigquery("amiable-octane-267022.census_dataset.Member_3","amiable-octane-267022")
+    #X_val, y_val =utils._feature_label_split(df_val,"is_churn")
 
 
     estimator.fit(X_train, y_train)
+    f1_scorer = make_scorer(f1_score)
 
     if metadata.HYPERPARAMTER_TUNING:
-        # Note: for now, use `cross_val_score` defaults (i.e. 3-fold)
-        score = f1_score(y_val,estimator.predict(X_val))
+        scores=model_selection.cross_val_score(estimator, X_train, y_train, cv=3,scoring=f1_scorer)
 
-        logging.info('Score: %s', score)
+        logging.info('Score: %s', scores)
 
-        # The default name of the metric is training/hptuning/metric.
-        # We recommend that you assign a custom name
-        # The only functional difference is that if you use a custom name,
-        # you must set the hyperparameterMetricTag value in the
-        # HyperparameterSpec object in the job request to match your chosen name
+        #tune hyper
         hpt = hypertune.HyperTune()
         hpt.report_hyperparameter_tuning_metric(
             hyperparameter_metric_tag='F1_SCORE',
-            metric_value=score,
+            metric_value=np.mean(scores),
             global_step=10000)
     
     # Write model and eval metrics to `output_dir`
@@ -57,7 +54,6 @@ def _train_and_evaluate(estimator, output_dir):
 
 def run_experiment(arguments):
     """Testbed for running model training and evaluation."""
-    # Get data for training and evaluation
 
     logging.info('Arguments: %s', arguments)
 

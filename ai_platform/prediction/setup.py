@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,28 +14,18 @@
 # limitations under the License.
 # ==============================================================================
 
-"""ML model definitions."""
+from setuptools import find_packages
+from setuptools import setup
 
-from sklearn import linear_model
+REQUIRED_PACKAGES = [
+    'google-api-python-client',
+]
 
-def get_estimator(arguments):
-    """Generate ML Pipeline which include model training
-
-    Args:
-      arguments: (argparse.ArgumentParser), parameters passed from command-line
-
-    Returns:
-      structured.pipeline.Pipeline
-    """
-
-    # tolerance and C are expected to be passed as
-    # command line argument to task.py
-    classifier = linear_model.LogisticRegression(
-        penalty="l2",
-        tol=arguments.tol,
-        C = arguments.C,
-        solver='lbfgs',
-        max_iter=1000
-    )
-
-    return classifier
+setup(
+    name='trainer',
+    version='0.1',
+    install_requires=REQUIRED_PACKAGES,
+    packages=find_packages(),
+    include_package_data=True,
+    description='AI Platform | Prediction | scikit-learn | Base'
+)

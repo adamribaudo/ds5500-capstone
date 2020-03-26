@@ -19,11 +19,12 @@ set -v
 
 echo "Submitting an AI Platform job..."
 
-TIER="BASIC" # BASIC | BASIC_GPU | STANDARD_1 | PREMIUM_1
+TIER="BASIC"
+# https://cloud.google.com/sdk/gcloud/reference/ai-platform/jobs/submit/training?hl=en_US
 
 export MODEL_NAME="lr"
 
-PACKAGE_PATH=./trainer # this can be a gcs location to a zipped and uploaded package
+PACKAGE_PATH=./trainer 
 MODEL_DIR=gs://${BUCKET_NAME}/${MODEL_NAME}
 
 CURRENT_DATE=`date +%Y%m%d_%H%M%S`

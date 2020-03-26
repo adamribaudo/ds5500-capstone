@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,28 +15,15 @@
 # limitations under the License.
 # ==============================================================================
 
-"""ML model definitions."""
+set -v
 
-from sklearn import linear_model
+# Delete the directories created by setup.py:
+rm -rf dist
+rm -rf trainer.egg-info
+rm -rf build
 
-def get_estimator(arguments):
-    """Generate ML Pipeline which include model training
+# Delete model version resource
+gcloud ai-platform versions delete ${MODEL_VERSION} --model ${MODEL_NAME} --quiet
 
-    Args:
-      arguments: (argparse.ArgumentParser), parameters passed from command-line
-
-    Returns:
-      structured.pipeline.Pipeline
-    """
-
-    # tolerance and C are expected to be passed as
-    # command line argument to task.py
-    classifier = linear_model.LogisticRegression(
-        penalty="l2",
-        tol=arguments.tol,
-        C = arguments.C,
-        solver='lbfgs',
-        max_iter=1000
-    )
-
-    return classifier
+# Delete model resource
+gcloud ai-platform models delete ${MODEL_NAME} --quiet
