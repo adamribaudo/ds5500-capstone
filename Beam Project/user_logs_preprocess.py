@@ -9,6 +9,7 @@ import logging
 import sys
 import time
 from datetime import datetime
+from datetime import date
 from random import random
 import os
 import apache_beam as beam
@@ -20,31 +21,16 @@ from apache_beam.options.pipeline_options import SetupOptions
 # Set GCP credentials
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\Owner\\Google Drive\\Northeastern\\DS 5500 Capstone\\ds5500-capstone\\ds5500-7e5f8aa07468.json"
 
-# TODO paramaterize these
-project_input_dataset = "ds5500:kkbox." #"ds5500:beam." #"ds5500:kkbox."
-project_input_dataset_standard = "ds5500.kkbox."
 
-user_logs_tbl = "user_logs" #"user_logs_fake" # "user_logs"
-users_tbl = "members" #"users_fake" # "members"
-transactions_tbl = "transactions_v3" #"transactions_fake" # "transactions_v3"
-
-project_output_dataset = "ds5500:beam."
-
-
-name_suffix = str(int(datetime.now().timestamp()))
-features_output_train_tbl = project_output_dataset + "features_output_train_" + name_suffix 
-features_output_val_tbl = project_output_dataset + "features_output_val_" + name_suffix 
-features_output_test_tbl = project_output_dataset + "features_output_test_" + name_suffix 
 num_payment_ids = 45
 
-features_output_schema = "msno:STRING,city:INTEGER,feature_autorenew:INTEGER,feature_discount_mean:FLOAT64,is_churn:INTEGER,"
+features_output_schema = "msno:STRING,city:INTEGER,bd:INTEGER,registration_length:INTEGER,feature_autorenew:INTEGER,feature_discount_mean:FLOAT64,is_churn:INTEGER"
 for i in ('25','50','75','985','unq'):
     features_output_schema+=",avg_num_" + i + ":INTEGER"
 for i in ('25','50','75','985','unq'):
     features_output_schema+=",sum_num_" + i + ":INTEGER"
 for i in range(num_payment_ids):
     features_output_schema+=",payment_method_id_" + str(i+1) + ":INTEGER"
-
 
 # https://beam.apache.org/releases/pydoc/2.6.0/apache_beam.transforms.core.html#apache_beam.transforms.core.CombineFn
 class SummarisePaymentId(beam.CombineFn):
@@ -87,6 +73,8 @@ class AverageFn(beam.CombineFn):
 def format_for_BQ(x):
     output = {"msno":x[0],
     "city":x[1]["user_demo"][0]["city"],
+    "bd":x[1]["user_demo"][0]["bd"],
+    "registration_length":x[1]["user_demo"][0]["registration_length"],
     "feature_autorenew":x[1]["feature_autorenew"][0],
     "feature_discount_mean":x[1]["feature_discount_mean"][0],
     # If there is no entry for this MSNO in 'not_churned_users' then is_churn=1
@@ -106,7 +94,6 @@ def format_for_BQ(x):
         output.update({"payment_method_id_"+str(i+1): int(x[1]["feature_payment_id_encoded"][0][i+1] >= 1)})
 
     return output
-
 
 # Convert a payment ID into a list of integers one-hot encoded to the payment ID
 def OneHotPaymentId(elem):
@@ -140,29 +127,33 @@ class ParseTransactionsBQ(beam.DoFn):
       logging.error('Parse error on "%s"', elem)
 
 class ParseUsersBQ(beam.DoFn):
-  """Parses the BQ rows into key, value pairs.
+    def __init__(self,target_month_start):
+        beam.DoFn.__init__(self)
+        self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
+        self.target_month_start = target_month_start
 
-   msno	city	bd	gender	registered_via	registration_init_time
-  """
-  def __init__(self):
-    beam.DoFn.__init__(self)
-    self.num_parse_errors = Metrics.counter(self.__class__, 'num_parse_errors')
+    def process(self, elem):
 
-  def process(self, elem):
-    try:
-      
-      msno = elem["msno"]
-      yield (msno,
-             {
-          'city': int(elem["city"]),
-          'bd': int(elem["bd"]),
-          'registered_via': int(elem["registered_via"]),
-          'registration_init_time': int(elem["registration_init_time"])
-      })
-    except:
-      # Log and count parse errors
-      self.num_parse_errors.inc()
-      logging.error('Parse error on "%s"', elem)
+        msno = elem["msno"]
+        year = int(str(elem["registration_init_time"])[0:4])
+        month = int(str(elem["registration_init_time"])[4:6])
+        day = int(str(elem["registration_init_time"])[6:8])
+        registration_date = date(year, month, day)
+        year = int(str(self.target_month_start)[0:4])
+        month = int(str(self.target_month_start)[4:6])
+        day = int(str(self.target_month_start)[6:8])
+        target_date = date(year, month, day)
+        registration_length = (target_date - registration_date).days
+
+        yield (msno,
+                {
+            'city': int(elem["city"]),
+            'bd': int(elem["bd"]),
+            'registered_via': int(elem["registered_via"]),
+            'registration_init_time': int(elem["registration_init_time"]),
+            'registration_length':registration_length
+        })
+
 
 class ParseUserLogsBQ(beam.DoFn):
   def __init__(self):
@@ -207,14 +198,22 @@ def train_test_split(user, num_partitions):
 def run(argv=None, save_main_session=True):
   parser = argparse.ArgumentParser()
 
+  parser.add_argument('--target_month_start',
+      type=int,
+      required=True,
+      help='Start date of the expiration target month')
+  parser.add_argument('--target_month_end',
+      type=int,
+      required=True,
+      help='End date of the expiration target month')
+  parser.add_argument('--user_logs_start',
+      type=int,
+      required=True,
+      help='Start date for filtering users by activity')
   parser.add_argument('--dataset',
       type=str,
       required=True,
-      help='BigQuery Dataset to write tables to. '
-      'Must already exist.')
-  parser.add_argument('--table_name',
-      default='hourly_scores',
-      help='The BigQuery table name. Should not already exist.')
+      help='Start date for filtering users by activity')
 
 
   args, pipeline_args = parser.parse_known_args(argv)
@@ -242,18 +241,36 @@ def run(argv=None, save_main_session=True):
   options.view_as(SetupOptions).save_main_session = save_main_session
 
   with beam.Pipeline(options=options) as p:
-      
+      ## Find MNSOs with an expiration in the target month
+      target_month_start = args.target_month_start
+      target_month_end = args.target_month_end
+      user_logs_start = args.user_logs_start
+
+      ## Table params; fake dataset for testing purposes
+      if args.dataset == "fake":
+          project_input_dataset = "ds5500:beam."
+          project_input_dataset_standard = "ds5500.beam."
+          user_logs_tbl = "user_logs_fake" 
+          users_tbl = "users_fake" 
+          transactions_tbl = "transactions_fake" 
+      else:
+          project_input_dataset = "ds5500:kkbox."
+          project_input_dataset_standard = "ds5500.kkbox."
+          user_logs_tbl = "user_logs"
+          users_tbl = "members" 
+          transactions_tbl = "transactions_v3" 
+          
+      project_output_dataset = "ds5500:beam."
+      name_suffix = str(int(datetime.now().timestamp()))
+      features_output_train_tbl = project_output_dataset + "features_output_train_" + name_suffix 
+      features_output_val_tbl = project_output_dataset + "features_output_val_" + name_suffix 
+      features_output_test_tbl = project_output_dataset + "features_output_test_" + name_suffix 
+
       # Read users from BQ
       users = (
-          p | 'Query Users table in BQ' >> beam.io.Read(beam.io.BigQuerySource(table=project_input_dataset+users_tbl))
-          | beam.ParDo(ParseUsersBQ())
+          p | 'Query Users tabl e in BQ' >> beam.io.Read(beam.io.BigQuerySource(table=project_input_dataset+users_tbl))
+          | beam.ParDo(ParseUsersBQ(target_month_start))
           )
-
-      ## Find MNSOs with an expiration in the target month
-      # TODO add these as cmd line arguments
-      target_month_start = 20170201
-      target_month_end = 20170228
-      user_logs_start = 20160301
 
       # Read valid user transactions from BQ
       query_params = {'users_tbl':project_input_dataset_standard+users_tbl,
@@ -319,14 +336,6 @@ def run(argv=None, save_main_session=True):
       ## Feature engineering
       ####
 
-      # TODO features: 
-      # received_discount as max(is_discount) from transactions
-      # membership duration from today using registration date
-      # payment method id - one hot
-      # average/std_dev amount paid
-      # add bd
-
-
       # Always Auto-Renew: 1 if the user consistently have auto-renew on all transactions. 0 otherwise
       feature_autorenew = (
       transactions | beam.Map(lambda x: (x["msno"],x["is_auto_renew"])) | beam.CombinePerKey(min))
@@ -352,7 +361,7 @@ def run(argv=None, save_main_session=True):
       ##
 
       # Combine all user features with users and filter users with no data
-      allOutput =( 
+      all_output =( 
           {'user_demo': users, 
            'feature_user_log_counts':user_log_features,
            'feature_autorenew':feature_autorenew,
@@ -368,13 +377,15 @@ def run(argv=None, save_main_session=True):
       | "Flatten to single dictionary for BQ" >> beam.Map(format_for_BQ) 
       )
 
-      # partition into train/val/test based on random float
-      train, val, test = (allOutput | beam.Partition(train_test_split, 3))
+      
+      ## partition into train/val/test based on random float
+      train, val, test = (all_output | beam.Partition(train_test_split, 3))
       
       # write_disposition=beam.io.BigQueryDisposition.WRITE_TRUNCATE causes the function to sleep for 150 seconds to wait for delete to finalize before write
 
       # output to BQ
-      val| "Validation output" >> beam.io.WriteToBigQuery(table=features_output_val_tbl,schema=features_output_schema)
+      #features_output_schema
+      val | "Validation output" >> beam.io.WriteToBigQuery(table=features_output_val_tbl,schema=features_output_schema)
       train | "Training output" >> beam.io.WriteToBigQuery(table=features_output_train_tbl,schema=features_output_schema)
       test | "Testing output" >> beam.io.WriteToBigQuery(table=features_output_test_tbl,schema=features_output_schema)
 

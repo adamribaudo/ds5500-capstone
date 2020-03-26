@@ -13,7 +13,7 @@
     <RootNamespace>Beam Project</RootNamespace>
     <InterpreterId>MSBuild|ds5500-vs-env|$(MSBuildProjectFullPath)</InterpreterId>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <CommandLineArguments>--project ds5500 --dataset beam --runner DataFlowRunner</CommandLineArguments>
+    <CommandLineArguments>--project ds5500 --dataset beam --target_month_start 20170201 --target_month_end 20170228 --user_logs_start 20160301 --dataset fake</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
     <SuppressPackageInstallationPrompt>True</SuppressPackageInstallationPrompt>
   </PropertyGroup>
