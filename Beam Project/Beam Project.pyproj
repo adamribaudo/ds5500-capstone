@@ -13,7 +13,7 @@
     <RootNamespace>Beam Project</RootNamespace>
     <InterpreterId>MSBuild|ds5500-vs-env|$(MSBuildProjectFullPath)</InterpreterId>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <CommandLineArguments>--project ds5500 --dataset beam --target_month_start 20170201 --target_month_end 20170228 --user_logs_start 20160301 --dataset fake</CommandLineArguments>
+    <CommandLineArguments>--project ds5500 --target_month_start 20170201 --target_month_end 20170228 --user_logs_start 20160301 --dataset fake --credentials "..\amiable-octane-267022-061a6f297eeb.json"</CommandLineArguments>
     <EnableNativeCodeDebugging>False</EnableNativeCodeDebugging>
     <SuppressPackageInstallationPrompt>True</SuppressPackageInstallationPrompt>
   </PropertyGroup>
@@ -27,9 +27,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="user_logs_preprocess.py" />
-    <Compile Include="hourly_score_example.py">
-      <SubType>Code</SubType>
-    </Compile>
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="..\..\Virtual Envs\ds5500-vs-env\">

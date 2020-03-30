@@ -18,10 +18,6 @@ from apache_beam.options.pipeline_options import GoogleCloudOptions
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import SetupOptions
 
-# Set GCP credentials
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\Owner\\Google Drive\\Northeastern\\DS 5500 Capstone\\ds5500-capstone\\ds5500-7e5f8aa07468.json"
-
-
 num_payment_ids = 45
 
 features_output_schema = "msno:STRING,city:INTEGER,bd:INTEGER,registration_length:INTEGER,feature_autorenew:INTEGER,feature_discount_mean:FLOAT64,is_churn:INTEGER"
@@ -35,23 +31,21 @@ for i in range(num_payment_ids):
 # https://beam.apache.org/releases/pydoc/2.6.0/apache_beam.transforms.core.html#apache_beam.transforms.core.CombineFn
 class SummarisePaymentId(beam.CombineFn):
   def create_accumulator(self):
+      # Generate empty list of 0's sized to the number of unique payment IDs
     return [0] * (num_payment_ids+1)
 
   def add_input(self, payment_ids_list, input):
       # Loop through payment Ids which will be 0 or 1 and add them to total found
       for i in range(num_payment_ids):
           payment_ids_list[i+1] += input[i+1]
-
       return payment_ids_list
    
   def merge_accumulators(self, accumulators):
-      #[sum(x) for x in zip(list1, list2)]
+      # Sum across lists when merging accumulators
     return [sum(x) for x in zip(*accumulators)]
 
   def extract_output(self, payment_ids_list):
-    # Convert to dictionary:
-    #for i in range(num_payment_ids):
-        #elem["payment_method_id_"+str(i)] = int(int(elem["payment_method_id"]) == i)
+      # Return summed lists per user
     return payment_ids_list
 
 class AverageFn(beam.CombineFn):
@@ -213,17 +207,28 @@ def run(argv=None, save_main_session=True):
   parser.add_argument('--dataset',
       type=str,
       required=True,
-      help='Start date for filtering users by activity')
+      help='Real or fake data')
+  parser.add_argument('--credentials',
+      type=str,
+      required=True,
+      help='Path to service account JSON')
 
 
   args, pipeline_args = parser.parse_known_args(argv)
 
   options = PipelineOptions(pipeline_args)
 
+  # Set GCP credentials
+  os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = args.credentials
+  
+  #"C:\\Users\\Owner\\Google Drive\\Northeastern\\DS 5500 Capstone\\ds5500-capstone\\amiable-octane-267022-061a6f297eeb.json"
+
   google_cloud_options = options.view_as(GoogleCloudOptions)
+  gcs_project = google_cloud_options.project
   google_cloud_options.region = "us-east1"
-  google_cloud_options.staging_location = 'gs://arr-beam-test/temp'
-  google_cloud_options.temp_location = 'gs://arr-beam-test/temp'
+  # TODO update as parameter
+  google_cloud_options.staging_location = 'gs://pipeline_beam/temp' #'gs://arr-beam-test/temp'
+  google_cloud_options.temp_location = 'gs://pipeline_beam/temp' #'gs://arr-beam-test/temp'
   
   # look into not using public IPs 
   # https://cloud.google.com/dataflow/docs/guides/specifying-exec-params
@@ -248,23 +253,23 @@ def run(argv=None, save_main_session=True):
 
       ## Table params; fake dataset for testing purposes
       if args.dataset == "fake":
-          project_input_dataset = "ds5500:beam."
-          project_input_dataset_standard = "ds5500.beam."
+          project_input_dataset = gcs_project + ":beam."
+          project_input_dataset_standard = gcs_project + ".beam."
           user_logs_tbl = "user_logs_fake" 
           users_tbl = "users_fake" 
           transactions_tbl = "transactions_fake" 
       else:
-          project_input_dataset = "ds5500:kkbox."
-          project_input_dataset_standard = "ds5500.kkbox."
+          project_input_dataset = gcs_project + ":kkbox."
+          project_input_dataset_standard = gcs_project + ".kkbox."
           user_logs_tbl = "user_logs"
           users_tbl = "members" 
-          transactions_tbl = "transactions_v3" 
+          transactions_tbl = "transactions" 
           
-      project_output_dataset = "ds5500:beam."
+      project_output_dataset = gcs_project + ":kkbox."
       name_suffix = str(int(datetime.now().timestamp()))
-      features_output_train_tbl = project_output_dataset + "features_output_train_" + name_suffix 
-      features_output_val_tbl = project_output_dataset + "features_output_val_" + name_suffix 
-      features_output_test_tbl = project_output_dataset + "features_output_test_" + name_suffix 
+      features_output_train_tbl = project_output_dataset + "output_train_" + name_suffix 
+      features_output_val_tbl = project_output_dataset + "output_val_" + name_suffix 
+      features_output_test_tbl = project_output_dataset + "output_test_" + name_suffix 
 
       # Read users from BQ
       users = (
