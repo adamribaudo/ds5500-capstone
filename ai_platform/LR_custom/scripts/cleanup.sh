@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Copyright 2019 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,16 +15,16 @@
 # ==============================================================================
 
 set -v
-export MODEL_VERSION=v1
-export MODEL_NAME='test_sk'
 
 # Delete the directories created by setup.py:
 rm -rf dist
 rm -rf trainer.egg-info
 rm -rf build
+rm -rf trained
 
-# Delete model version resource
-gcloud ai-platform versions delete ${MODEL_VERSION} --model ${MODEL_NAME} --quiet
+# This has to be run after train-cloud.sh is successfully executed
 
-# Delete model resource
-gcloud ai-platform models delete ${MODEL_NAME} --quiet
+# Delete Cloud Storage objects that were created
+gsutil -m rm -r ${MODEL_DIR}
+
+set -

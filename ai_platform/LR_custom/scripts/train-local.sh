@@ -13,29 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-# This scripts performs local training for a TensorFlow model.
-set -ev
+
+set -v
+
 echo "Training local ML model"
 
-MODEL_NAME="tensorflow_test" # Change to your model name, e.g. "estimator"
+MODEL_NAME="structured-test"
 
 PACKAGE_PATH=./trainer
-MODEL_DIR=./trained_models/${MODEL_NAME}
-# Run ./download-taxi.sh under datasets folder or set the value directly.
+MODEL_DIR=./trained/${MODEL_NAME}
 
 gcloud ai-platform local train \
-        --module-name=trainer.input \
+        --module-name=trainer.all_in_one \
         --package-path=${PACKAGE_PATH} \
-        -- \
-        --job-dir=${MODEL_DIR}
+        --job-dir=${MODEL_DIR} \
 
+set -
 
-ls ${MODEL_DIR}/export/estimate
-MODEL_LOCATION=${MODEL_DIR}/export/estimate/$(ls ${MODEL_DIR}/export/estimate | tail -1)
-echo ${MODEL_LOCATION}
-ls ${MODEL_LOCATION}
-
-# Open issue: https://stackoverflow.com/questions/48824381/gcloud-ml-engine-local-predict-runtimeerror-bad-magic-number-in-pyc-file
-# Verify local prediction
-# gcloud ai-platform local predict --model-dir=${MODEL_LOCATION} --json-instances=${TAXI_PREDICTION_DICT_NDJSON} --verbosity debug
-
+# Notes:
+# TAXI_TRAIN_SMALL is set by datasets/downlaod-taxi.sh script

@@ -1,0 +1,17 @@
+trainingInput:
+  hyperparameters:
+    goal: MAXIMIZE
+    maxTrials: 2
+    maxParallelTrials: 2
+    hyperparameterMetricTag: F1_SCORE
+    params:
+    - parameterName: tol
+      type: DOUBLE
+      minValue: 0.00001
+      maxValue: 0.0001
+      scaleType: UNIT_LINEAR_SCALE
+    - parameterName: C
+      type: DOUBLE
+      minValue: 0.01
+      maxValue: 1000
+      scaleType: UNIT_LOG_SCALE

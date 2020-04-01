@@ -17,23 +17,23 @@
 
 # This has to be run after train-cloud.sh is successfully executed
 
+#gcloud components install beta
 export MODEL_VERSION=v1
 export MODEL_NAME='test_sk'
-export MODEL_DIR="gs://example3w/lr/3"
-# export MACHINE_TYPE="machine used for testing"
+MODEL_DIR=gs://example3w/lr_2/2
+CUSTOM_ROUTINE_PATH=gs://${BUCKET_NAME}/lr_2/library/custom_routine-1.0.tar.gz
 
 FRAMEWORK=SCIKIT_LEARN
 
-# create the model resource for deploying
 echo "First, creating the model resource..."
-gcloud ai-platform models create ${MODEL_NAME} --regions=${REGION}
+gcloud beta ai-platform models create ${MODEL_NAME} --regions=${REGION} \
+  --enable-logging --enable-console-logging
 
-# create the model version and load the model used for prediciton to this version
 echo "Second, creating the model version..."
-gcloud ai-platform versions create ${MODEL_VERSION} \
-  --model ${MODEL_NAME} \
-  --origin ${MODEL_DIR}/model \
-  --framework ${FRAMEWORK} \
+gcloud beta ai-platform versions create ${MODEL_VERSION} \
+  --model=${MODEL_NAME} \
+  --origin=${MODEL_DIR}/model/ \
+  --framework=${FRAMEWORK} \
   --runtime-version=${RUNTIME_VERSION} \
   --python-version=${PYTHON_VERSION} \
-# --machineType=${MACHINE_TYPE}
+  --package-uris=${CUSTOM_ROUTINE_PATH} \

@@ -30,14 +30,18 @@ function export_variables(){
 
     # UNCOMMENT & REPLACE "your-gcp-project-id" with your GCP PROJECT ID
     export PROJECT_ID="amiable-octane-267022"
+    #"ds5500"
 
     # UNCOMMENT & REPLACE "your-gcp-bucket-name" with a universally
     # unique name for a GCS bucket. Do not include gs://
     export BUCKET_NAME="example3w"
+    #"beam"
 
     # UNCOMMENT & REPLACE "path/to/service/account/key" with the full path to
     # the service account key file which you have created and downloaded.
-    export GOOGLE_APPLICATION_CREDENTIALS="/Users/wangzhengye/Desktop/ai_platform/training/LR_simple/amiable-octane-267022-061a6f297eeb.json"
+    export GOOGLE_APPLICATION_CREDENTIALS="/Users/wangzhengye/Desktop/ai_platform/training/LR_sk/amiable-octane-267022-061a6f297eeb.json"
+    #"/Users/wangzhengye/Desktop/ai_platform/training/LR_sk/ds5500-7e5f8aa07468.json"
+
 
     echo "RUNTIME_VERSION='${RUNTIME_VERSION}'"
     echo "PYTHON_VERSION='${PYTHON_VERSION}'"

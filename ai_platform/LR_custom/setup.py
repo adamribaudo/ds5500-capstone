@@ -14,10 +14,6 @@
 # limitations under the License.
 # ==============================================================================
 
-from setuptools import find_packages
-from setuptools import setup
-
-
 REQUIRED_PACKAGES = [
                      'tensorflow==1.15.2',
                      'scikit-learn>=0.20.2',
@@ -29,11 +25,10 @@ REQUIRED_PACKAGES = [
                      'google-cloud-core>=1.0.0'
                      ]
 
-setup(
-    name='trainer',
-    version='0.1',
-    install_requires=REQUIRED_PACKAGES,
-    packages=find_packages(),
-    include_package_data=True,
-    description='AI Platform | Prediction | scikit-learn | Custom Routines'
-)
+
+import setuptools
+setuptools.setup(name='custom_routine',
+                 packages=['trainer'],
+                 version="1.0",
+                 install_requires=REQUIRED_PACKAGES,
+                 )
