@@ -15,7 +15,7 @@
 # ==============================================================================
 
 REQUIRED_PACKAGES = [
-                     'tensorflow==1.15.2',
+                     'tensorflow==2.6.4',
                      'scikit-learn>=0.20.2',
                      'pandas==0.24.2',
                      'cloudml-hypertune',
